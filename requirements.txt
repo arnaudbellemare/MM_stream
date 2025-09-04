@@ -1,21 +1,17 @@
-# ==============================================================================
-# PYTHON PACKAGE REQUIREMENTS FOR THE STREAMLIT APP
-# ==============================================================================
-# This file lists all necessary packages for the Streamlit Cloud environment.
-# ==============================================================================
-
-# Core libraries for numerical operations and data structures
 numpy
 pandas
+scipy
 
-# Machine learning library (provides sklearn)
+# Machine learning & metrics
 scikit-learn
 
-# For fetching historical market data from exchanges
+# Data and Web App
 ccxt
-
-# For creating interactive charts
 plotly
-
-# The web application framework
 streamlit
+
+# For Wavelet Denoising
+PyWavelets
+
+# For chart date formatting in Matplotlib
+matplotlib
