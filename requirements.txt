@@ -1,13 +1,10 @@
 # ==============================================================================
-# PYTHON PACKAGE REQUIREMENTS FOR STREAMLIT APP
+# PYTHON PACKAGE REQUIREMENTS FOR THE STREAMLIT APP
 # ==============================================================================
-# This file is used by Streamlit Cloud to install dependencies.
+# This version REMOVES the problematic 'tseries_patterns' library.
 # ==============================================================================
 
-# Build-time dependency (MUST be listed before packages that need it)
-Cython
-
-# Core libraries
+# Core libraries for numerical operations and data structures
 numpy
 pandas
 scipy
@@ -20,7 +17,3 @@ joblib
 ccxt
 plotly
 streamlit
-
-# Problematic package: Install it without creating an isolated build environment.
-# This forces pip to use the Cython we installed from the line above.
-tseries_patterns --no-build-isolation
