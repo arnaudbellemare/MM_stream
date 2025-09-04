@@ -166,6 +166,8 @@ with tab2:
 # ==============================================================================
 # TAB 3: WAVELET AUTO-LABELING
 # ==============================================================================
+# TAB 3: WAVELET AUTO-LABELING (Corrected)
+# ==============================================================================
 with tab3:
     st.header("Wavelet Auto-Labeling & Performance Metrics")
     st.markdown("This section implements the advanced labeling technique using wavelet denoising and evaluates its performance against a simple ground truth.")
@@ -204,17 +206,21 @@ with tab3:
         st.info("Denoising data with Wavelets..."); coeffs = pywt.wavedec(data_train, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1])) / 0.6745
         uthresh = sigma * np.sqrt(2 * np.log(len(data_train))); coeffs_thresh = [coeffs[0]] + [pywt.threshold(c, uthresh, mode='soft') for c in coeffs[1:]]; data_train_denoised = pywt.waverec(coeffs_thresh, 'db4')
         
-        # --- CRITICAL FIX 1: Synchronize lengths after wavelet transform ---
+        # Synchronize lengths after wavelet transform
         min_len = min(len(data_train_denoised), len(timestamps_train))
         data_train_denoised = data_train_denoised[:min_len]
         timestamps_train = timestamps_train[:min_len]
         df_wl = df_wl.iloc[:min_len].copy()
+        
+        # --- CRITICAL FIX: Add the denoised data to the DataFrame as a new column ---
+        df_wl['denoised_close'] = data_train_denoised
         # ---
         
         if threshold_type_wl == "Volatility-based": w_used = rogers_satchell_volatility(df_wl); st.write(f"**Volatility-based threshold (w):** `{w_used:.4f}`")
         else: w_used = constant_w_wl; st.write(f"**Using constant threshold (w):** `{w_used:.4f}`")
         
         st.info("Auto-labeling denoised data...")
+        # Convert unhashable types to tuples for caching
         labels_wavelet = auto_labeling(tuple(data_train_denoised), tuple(timestamps_train), w_used)
         df_wl['label'] = labels_wavelet
         
@@ -222,15 +228,18 @@ with tab3:
         accuracy = accuracy_score(gt_labels, labels_wavelet); precision = precision_score(gt_labels, labels_wavelet, average='weighted', zero_division=0); recall = recall_score(gt_labels, labels_wavelet, average='weighted', zero_division=0)
         st.header("Performance Metrics"); col1, col2, col3 = st.columns(3)
         col1.metric("Accuracy", f"{accuracy:.2%}"); col2.metric("Precision", f"{precision:.2%}"); col3.metric("Recall", f"{recall:.2%}")
+        
         st.header("Charts")
         fig_wl = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Denoised Data & Labels', f'Original Price for {symbol_wl}'))
+        
+        # Now this line will work correctly
         fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['denoised_close'], name='Wavelet Denoised Price', line=dict(color='orange')), row=1, col=1)
+        
         up = df_wl[df_wl['label']==1]; down = df_wl[df_wl['label']==-1]
         
-        # --- CRITICAL FIX 2: Plot markers on the DENOISED price line ---
-        fig_wl.add_trace(go.Scatter(x=up.index, y=up['denoised_close'], mode='markers', name='Up Label', marker=dict(color='green', symbol='dot')), row=1, col=1)
-        fig_wl.add_trace(go.Scatter(x=down.index, y=down['denoised_close'], mode='markers', name='Down Label', marker=dict(color='red', symbol='dot')), row=1, col=1)
-        # ---
+        # Plot markers on the DENOISED price line for accuracy
+        fig_wl.add_trace(go.Scatter(x=up.index, y=up['denoised_close'], mode='markers', name='Up Label', marker=dict(color='green', symbol='triangle-up')), row=1, col=1)
+        fig_wl.add_trace(go.Scatter(x=down.index, y=down['denoised_close'], mode='markers', name='Down Label', marker=dict(color='red', symbol='triangle-down')), row=1, col=1)
         
         fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['close'], name='Original Price', line=dict(color='blue')), row=2, col=1)
         fig_wl.update_layout(height=800, legend_title_text='Legend')
