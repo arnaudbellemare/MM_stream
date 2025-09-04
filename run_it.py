@@ -22,7 +22,7 @@ warnings.filterwarnings('ignore')
 st.set_page_config(layout="wide", page_title="Quantitative Research Dashboard")
 
 st.title(" QUANTITATIVE TRADING RESEARCH DASHBOARD")
-st.markdown("An interactive dashboard for backtesting strategies and analyzing advanced market signals.")
+st.markdown("An interactive dashboard for backtesting strategies and analyzing advanced market signals. This version includes critical bug fixes for caching and data indexing.")
 
 # ==============================================================================
 # Helper Functions (used across tabs)
@@ -112,17 +112,23 @@ with tab1:
                 st.success("✅ Backtest complete!")
                 st.subheader(f"Strategy: {indicator_type}"); final_equity = equity_bt.iloc[-1] if not equity_bt.empty else initial_cash; total_return = (final_equity / initial_cash - 1) * 100
                 st.metric("Final Equity (USD)", f"${final_equity:,.2f}"); st.metric("Total Return", f"{total_return:.2f}%"); st.metric("Total Trades", len(trades_bt))
-                fig_bt = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, subplot_titles=('Strategy Equity Curve', f'{indicator_type} Indicator', f'{symbol_bt} Price & Trades'), row_heights=[0.25, 0.25, 0.5])
-                fig_bt.add_trace(go.Scatter(x=equity_bt.index, y=equity_bt, mode='lines', name='Equity'), row=1, col=1)
-                fig_bt.add_trace(go.Scatter(x=df_indicator.index, y=df_indicator['indicator'], mode='lines', name=indicator_type, line=dict(color='orange')), row=2, col=1)
-                fig_bt.add_hline(y=entry_threshold, line_width=2, line_dash="dash", line_color="green", row=2, col=1, annotation_text="Buy Threshold"); fig_bt.add_hline(y=-entry_threshold, line_width=2, line_dash="dash", line_color="red", row=2, col=1, annotation_text="Sell Threshold")
-                fig_bt.add_trace(go.Scatter(x=df_indicator.index, y=df_indicator['close'], mode='lines', name=f'{symbol_bt} Price', line=dict(color='blue')), row=3, col=1)
-                if not trades_bt.empty:
-                    buys = trades_bt[trades_bt['type'] == 'BUY']; sells = trades_bt[trades_bt['type'] == 'SELL']; exits = trades_bt[trades_bt['type'].str.contains('EXIT')]
-                    fig_bt.add_trace(go.Scatter(x=buys['t'], y=buys['p'], mode='markers', name='Buys', marker=dict(color='lime', symbol='triangle-up', size=10)), row=3, col=1)
-                    fig_bt.add_trace(go.Scatter(x=sells['t'], y=sells['p'], mode='markers', name='Sells', marker=dict(color='magenta', symbol='triangle-down', size=10)), row=3, col=1)
-                    fig_bt.add_trace(go.Scatter(x=exits['t'], y=exits['p'], mode='markers', name='Exits', marker=dict(color='black', symbol='x', size=8)), row=3, col=1)
-                fig_bt.update_layout(height=900); st.plotly_chart(fig_bt, use_container_width=True)
+                
+                # --- PLOTTING FUNCTION FIX 1: Pass the symbol ---
+                def plot_backtest_results(df_plot, equity_curve, trades, symbol_to_plot):
+                    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, subplot_titles=('Strategy Equity Curve', f'{indicator_type} Indicator', f'{symbol_to_plot} Price & Trades'), row_heights=[0.25, 0.25, 0.5])
+                    fig.add_trace(go.Scatter(x=equity_curve.index, y=equity_curve, mode='lines', name='Equity'), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['indicator'], mode='lines', name=indicator_type, line=dict(color='orange')), row=2, col=1)
+                    fig.add_hline(y=entry_threshold, line_width=2, line_dash="dash", line_color="green", row=2, col=1, annotation_text="Buy Threshold"); fig.add_hline(y=-entry_threshold, line_width=2, line_dash="dash", line_color="red", row=2, col=1, annotation_text="Sell Threshold")
+                    fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['close'], mode='lines', name=f'{symbol_to_plot} Price', line=dict(color='blue')), row=3, col=1)
+                    if not trades.empty:
+                        buys = trades[trades['type'] == 'BUY']; sells = trades[trades['type'] == 'SELL']; exits = trades[trades['type'].str.contains('EXIT')]
+                        fig.add_trace(go.Scatter(x=buys['t'], y=buys['p'], mode='markers', name='Buys', marker=dict(color='lime', symbol='triangle-up', size=10)), row=3, col=1)
+                        fig.add_trace(go.Scatter(x=sells['t'], y=sells['p'], mode='markers', name='Sells', marker=dict(color='magenta', symbol='triangle-down', size=10)), row=3, col=1)
+                        fig.add_trace(go.Scatter(x=exits['t'], y=exits['p'], mode='markers', name='Exits', marker=dict(color='black', symbol='x', size=8)), row=3, col=1)
+                    fig.update_layout(height=900); return fig
+
+                # --- PLOTTING FUNCTION FIX 2: Call with the correct symbol ---
+                st.plotly_chart(plot_backtest_results(df_indicator, equity_bt, trades_bt, symbol_bt), use_container_width=True)
                 with st.expander("Show Raw Trades Data"): st.dataframe(trades_bt)
 
 # ==============================================================================
@@ -154,7 +160,7 @@ with tab2:
             ax_sg.scatter(df_sg.index[swing_points], close_prices[swing_points], color='lime', s=50, label="Swing Points", zorder=5)
             ax_sg.plot(df_sg.index, df_sg['spanB'], label="SpanB", color='purple', lw=2, linestyle='-.')
             ax_sg.set_xlim(df_sg.index.min(), df_sg.index.max()); ax_sg.set_ylim(close_prices.min()*0.98, close_prices.max()*1.02)
-            ax_sg.legend(); ax_sg.set_title("SG Swing Point Analysis"); plt.colorbar(lc, ax=ax_sg, label="SG Filter Difference")
+            ax_sg.legend(); ax_sg.set_title(f"SG Swing Point Analysis for {symbol_sg}"); plt.colorbar(lc, ax=ax_sg, label="SG Filter Difference")
             st.pyplot(fig_sg)
 
 # ==============================================================================
@@ -168,13 +174,9 @@ with tab3:
     threshold_type_wl = st.sidebar.radio("Threshold Type", ("Volatility-based", "Constant"), key="wl_thresh_type")
     constant_w_wl = st.sidebar.number_input("Constant Threshold (w)", value=0.01, step=0.001, format="%.4f", key="wl_const_w")
 
-    # --- THIS IS THE CORRECTED, ROBUST AUTO-LABELING FUNCTION ---
     @st.cache_data
     def auto_labeling(data_tuple, timestamp_tuple, w):
-        # Convert hashable tuples back to the types our logic needs
-        data_list = np.array(data_tuple)
-        timestamps = pd.Series(timestamp_tuple)
-        
+        data_list = np.array(data_tuple); timestamps = pd.Series(timestamp_tuple)
         labels = np.zeros(len(data_list)); FP = data_list[0]; x_H = data_list[0]; HT = timestamps[0]; x_L = data_list[0]; LT = timestamps[0]; Cid = 0; FP_N = 0
         for i in range(len(data_list)):
             if data_list[i] > FP + FP * w: x_H = data_list[i]; HT = timestamps[i]; FP_N = i; Cid = 1; break
@@ -183,18 +185,14 @@ with tab3:
             if Cid > 0:
                 if data_list[i] > x_H: x_H = data_list[i]; HT = timestamps[i]
                 if data_list[i] < x_H - x_H * w and LT < HT:
-                    mask = (timestamps > LT) & (timestamps <= HT)
-                    labels[mask] = 1
+                    mask = ((timestamps > LT) & (timestamps <= HT)).values; labels[mask] = 1
                     x_L = data_list[i]; LT = timestamps[i]; Cid = -1
             elif Cid < 0:
                 if data_list[i] < x_L: x_L = data_list[i]; LT = timestamps[i]
                 if data_list[i] > x_L + x_L * w and HT <= LT:
-                    mask = (timestamps > HT) & (timestamps <= LT)
-                    labels[mask] = -1
+                    mask = ((timestamps > HT) & (timestamps <= LT)).values; labels[mask] = -1
                     x_H = data_list[i]; HT = timestamps[i]; Cid = 1
-        labels = np.where(labels == 0, Cid, labels)
-        return labels
-    # ---
+        labels = np.where(labels == 0, Cid, labels); return labels
 
     def rogers_satchell_volatility(data):
         log_ho = np.log(data["high"] / data["open"]); log_lo = np.log(data["low"] / data["open"]); log_co = np.log(data["close"] / data["open"])
@@ -205,20 +203,27 @@ with tab3:
         data_train = df_wl["close"].values; timestamps_train = df_wl.index
         st.info("Denoising data with Wavelets..."); coeffs = pywt.wavedec(data_train, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1])) / 0.6745
         uthresh = sigma * np.sqrt(2 * np.log(len(data_train))); coeffs_thresh = [coeffs[0]] + [pywt.threshold(c, uthresh, mode='soft') for c in coeffs[1:]]; data_train_denoised = pywt.waverec(coeffs_thresh, 'db4')
+        
+        # --- CRITICAL FIX 1: Synchronize lengths after wavelet transform ---
+        min_len = min(len(data_train_denoised), len(timestamps_train))
+        data_train_denoised = data_train_denoised[:min_len]
+        timestamps_train = timestamps_train[:min_len]
+        df_wl = df_wl.iloc[:min_len].copy()
+        # ---
+        
         if threshold_type_wl == "Volatility-based": w_used = rogers_satchell_volatility(df_wl); st.write(f"**Volatility-based threshold (w):** `{w_used:.4f}`")
         else: w_used = constant_w_wl; st.write(f"**Using constant threshold (w):** `{w_used:.4f}`")
         
-        # --- CRITICAL FIX: Convert unhashable types to tuples before caching ---
         st.info("Auto-labeling denoised data...")
         labels_wavelet = auto_labeling(tuple(data_train_denoised), tuple(timestamps_train), w_used)
         df_wl['label'] = labels_wavelet
-        # ---
         
         gt_labels = np.sign(df_wl['close'].shift(-1) - df_wl['close']).fillna(0)
-        accuracy = accuracy_score(gt_labels, labels_wavelet); precision = precision_score(gt_labels, labels_wavelet, average='weighted'); recall = recall_score(gt_labels, labels_wavelet, average='weighted')
+        accuracy = accuracy_score(gt_labels, labels_wavelet); precision = precision_score(gt_labels, labels_wavelet, average='weighted', zero_division=0); recall = recall_score(gt_labels, labels_wavelet, average='weighted', zero_division=0)
         st.header("Performance Metrics"); col1, col2, col3 = st.columns(3)
         col1.metric("Accuracy", f"{accuracy:.2%}"); col2.metric("Precision", f"{precision:.2%}"); col3.metric("Recall", f"{recall:.2%}")
-        st.header("Charts"); fig_wl = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Denoised Data & Labels', 'Original Price'))
+        st.header("Charts")
+        fig_wl = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Denoised Data & Labels', f'Original Price for {symbol_wl}'))
         fig_wl.add_trace(go.Scatter(x=df_wl.index, y=data_train_denoised, name='Wavelet Denoised Price', line=dict(color='orange')), row=1, col=1)
         up = df_wl[df_wl['label']==1]; down = df_wl[df_wl['label']==-1]
         fig_wl.add_trace(go.Scatter(x=up.index, y=up['close'], mode='markers', name='Up Label', marker=dict(color='green', symbol='triangle-up')), row=1, col=1)
