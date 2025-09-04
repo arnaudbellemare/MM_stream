@@ -60,45 +60,58 @@ def find_and_label_causal_swings(prices_tuple, reversal_pct):
     prices = np.array(prices_tuple)
     reversal_mult = reversal_pct / 100.0
     
-    # Step 1: Find all potential pivots (local maxima/minima)
-    pivots = np.zeros(len(prices)) # 1 for high, -1 for low
-    for i in range(1, len(prices) - 1):
-        if prices[i] > prices[i-1] and prices[i] > prices[i+1]:
-            pivots[i] = 1
-        elif prices[i] < prices[i-1] and prices[i] < prices[i+1]:
-            pivots[i] = -1
-
-    # Step 2: Filter pivots to find confirmed swings and label data
+    # Step 1: Find all local peaks and troughs (potential pivots)
+    highs = (prices > np.roll(prices, 1)) & (prices > np.roll(prices, -1))
+    lows = (prices < np.roll(prices, 1)) & (prices < np.roll(prices, -1))
+    
+    # Step 2: Filter pivots into confirmed swings using ZigZag logic
     labels = np.zeros(len(prices))
     swing_highs = np.full(len(prices), np.nan)
     swing_lows = np.full(len(prices), np.nan)
     
-    last_swing_idx = 0
     last_swing_price = prices[0]
+    last_swing_idx = 0
     trend = 0 # 1 for up, -1 for down
 
     for i in range(1, len(prices)):
-        if pivots[i] == 1: # Potential high
-            if trend != 1: # If we are not already in an uptrend
+        if trend == 1: # In an uptrend, look for a confirmed high
+            if lows[i]:
+                if prices[i] < last_swing_price * (1 - reversal_mult):
+                    swing_highs[last_swing_idx] = last_swing_price
+                    trend = -1
+                    last_swing_price = prices[i]
+                    last_swing_idx = i
+            elif highs[i] and prices[i] >= last_swing_price:
+                last_swing_price = prices[i]
+                last_swing_idx = i
+        elif trend == -1: # In a downtrend, look for a confirmed low
+            if highs[i]:
                 if prices[i] > last_swing_price * (1 + reversal_mult):
-                    # Confirmed a new uptrend start (previous point was a low)
                     swing_lows[last_swing_idx] = last_swing_price
                     trend = 1
-            if trend == 1:
+                    last_swing_price = prices[i]
+                    last_swing_idx = i
+            elif lows[i] and prices[i] <= last_swing_price:
+                last_swing_price = prices[i]
+                last_swing_idx = i
+        else: # No trend yet
+            if highs[i] and prices[i] > last_swing_price * (1 + reversal_mult):
+                swing_lows[0] = prices[0] # Confirm initial point as a low
+                trend = 1
+                last_swing_price = prices[i]
+                last_swing_idx = i
+            elif lows[i] and prices[i] < last_swing_price * (1 - reversal_mult):
+                swing_highs[0] = prices[0] # Confirm initial point as a high
+                trend = -1
                 last_swing_price = prices[i]
                 last_swing_idx = i
 
-        elif pivots[i] == -1: # Potential low
-            if trend != -1: # If we are not already in a downtrend
-                if prices[i] < last_swing_price * (1 - reversal_mult):
-                    # Confirmed a new downtrend start (previous point was a high)
-                    swing_highs[last_swing_idx] = last_swing_price
-                    trend = -1
-            if trend == -1:
-                last_swing_price = prices[i]
-                last_swing_idx = i
-        
-        labels[i] = trend
+    # Step 3: Fill in the labels based on the final confirmed swings
+    last_label = 0
+    for i in range(len(prices)):
+        if not np.isnan(swing_lows[i]): last_label = 1
+        elif not np.isnan(swing_highs[i]): last_label = -1
+        labels[i] = last_label
         
     return swing_highs, swing_lows, labels
 # ---
