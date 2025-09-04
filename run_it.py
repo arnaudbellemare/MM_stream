@@ -171,6 +171,9 @@ with tab2:
 # ==============================================================================
 # TAB 3: WAVELET AUTO-LABELING (Corrected with Blue/Red Dots)
 # ==============================================================================
+# ==============================================================================
+# TAB 3: WAVELET AUTO-LABELING (Corrected with Duplicated Dots)
+# ==============================================================================
 with tab3:
     st.header("Wavelet Auto-Labeling & Performance Metrics")
     st.markdown("This section implements the advanced labeling technique using wavelet denoising and evaluates its performance against a simple ground truth.")
@@ -226,30 +229,37 @@ with tab3:
         st.header("Charts")
         fig_wl = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Denoised Data & Labels', f'Original Price for {symbol_wl}'))
         
+        # --- CHART 1: DENOISED DATA ---
         fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['denoised_close'], name='Wavelet Denoised Price', line=dict(color='orange')), row=1, col=1)
-        
         up = df_wl[df_wl['label']==1]
         down = df_wl[df_wl['label']==-1]
+        fig_wl.add_trace(go.Scatter(x=up.index, y=up['denoised_close'], mode='markers', name='Up Label', marker=dict(color='deepskyblue', symbol='circle', size=5)), row=1, col=1)
+        fig_wl.add_trace(go.Scatter(x=down.index, y=down['denoised_close'], mode='markers', name='Down Label', marker=dict(color='red', symbol='circle', size=5)), row=1, col=1)
         
-        # --- THIS IS THE MODIFIED PLOTTING LOGIC ---
-        # Changed to blue and red dots (circles)
+        # --- CHART 2: ORIGINAL PRICE ---
+        fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['close'], name='Original Price', line=dict(color='blue')), row=2, col=1)
+        
+        # --- THIS IS THE NEW MODIFICATION ---
+        # Add the same label markers to the second chart, but use the 'close' column for the y-axis
+        # We set `showlegend=False` to avoid cluttering the legend with duplicate entries.
         fig_wl.add_trace(go.Scatter(
             x=up.index, 
-            y=up['denoised_close'], 
+            y=up['close'], # Use original price for y-value
             mode='markers', 
-            name='Up Label', 
-            marker=dict(color='deepskyblue', symbol='circle', size=5)
-        ), row=1, col=1)
+            name='Up Label (on Price)', 
+            marker=dict(color='deepskyblue', symbol='circle', size=5),
+            showlegend=False 
+        ), row=2, col=1)
         
         fig_wl.add_trace(go.Scatter(
             x=down.index, 
-            y=down['denoised_close'], 
+            y=down['close'], # Use original price for y-value
             mode='markers', 
-            name='Down Label', 
-            marker=dict(color='red', symbol='circle', size=5)
-        ), row=1, col=1)
+            name='Down Label (on Price)', 
+            marker=dict(color='red', symbol='circle', size=5),
+            showlegend=False
+        ), row=2, col=1)
         # --- END MODIFICATION ---
-        
-        fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['close'], name='Original Price', line=dict(color='blue')), row=2, col=1)
+
         fig_wl.update_layout(height=800, legend_title_text='Legend')
         st.plotly_chart(fig_wl, use_container_width=True)
