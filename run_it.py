@@ -155,7 +155,7 @@ with tab2:
             df_sg['spanB'] = (df_sg['high'].rolling(window=span_window_sg).max() + df_sg['low'].rolling(window=span_window_sg).min()) / 2
             fig_sg, ax_sg = plt.subplots(figsize=(15, 7)); segments = np.array([mdates.date2num(df_sg.index), close_prices]).T.reshape(-1, 1, 2); segments = np.concatenate([segments[:-1], segments[1:]], axis=1)
             lc = LineCollection(segments, cmap='bwr', norm=plt.Normalize(vmin=-np.abs(diff_signal).max(), vmax=np.abs(diff_signal).max())); lc.set_array(diff_signal); ax_sg.add_collection(lc)
-            ax_sg.plot(df_sg.index, smoothed_short, label=f"Savgol Short", color='red', linestyle='--', lw=1)
+            ax_sg.plot(df_sg.index, smoothed_short, label=f"Savgol Short", color='gray', linestyle='--', lw=1)
             ax_sg.plot(df_sg.index, smoothed_long, label=f"Savgol Long", color='orange', linestyle='--', lw=1)
             ax_sg.scatter(df_sg.index[swing_points], close_prices[swing_points], color='lime', s=50, label="Swing Points", zorder=5)
             ax_sg.plot(df_sg.index, df_sg['spanB'], label="SpanB", color='purple', lw=2, linestyle='-.')
