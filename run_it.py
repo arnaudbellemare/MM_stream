@@ -89,14 +89,14 @@ def add_features_and_labels(df, swing_highs, swing_lows):
     df_copy.dropna(inplace=True)
     return df_copy
 
-# --- CORRECTED LINE ---
-# Using @st.cache_resource for the ML model, as it's a complex, non-data object.
 @st.cache_resource
 def train_ml_model(_df_train, feature_names):
-# --- END CORRECTION ---
-    st.info("Training Machine Learning model..."); X_train = _df_train[feature_names]; y_train = _df_train['target']
+    st.info("Training Machine Learning model..."); 
+    X_train = _df_train[feature_names]
+    y_train = _df_train['target']
     model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42, n_jobs=-1)
-    model.fit(X_train, y_train); return model
+    model.fit(X_train, y_train); 
+    return model
 
 @st.cache_data
 def run_backtest_with_causal_exits(_df_backtest, _model, feature_names, cash, size, gamma, stop_offset):
@@ -134,25 +134,38 @@ if st.sidebar.button("🚀 Run Backtest"):
         split_idx = int(len(df_featured) * train_test_split_ratio)
         df_train = df_featured.iloc[:split_idx]; df_backtest = df_featured.iloc[split_idx:]
         feature_names = ['momentum_24', 'volatility_24']
-        ml_model = train_ml_model(df_train, feature_names)
-        trades, equity = run_backtest_with_causal_exits(df_backtest, ml_model, feature_names, initial_cash, trade_size, risk_aversion_gamma, stop_loss_offset_pct)
-    st.success("✅ Backtest complete!")
-    st.header("📊 Performance Summary"); final_equity = equity.iloc[-1]; total_return = (final_equity / initial_cash - 1) * 100
-    st.metric("Final Equity (USD)", f"${final_equity:,.2f}"); st.metric("Total Return", f"{total_return:.2f}%"); st.metric("Total Trades (Entries + Exits)", len(trades))
-    st.header("📈 Charts")
-    def plot_results(df_plot, equity_curve, trades):
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Strategy Equity Curve', f'{symbol} Price, Swings & Trades'), row_heights=[0.3, 0.7])
-        fig.add_trace(go.Scatter(x=equity_curve.index, y=equity_curve, mode='lines', name='Equity'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['close'], mode='lines', name=f'{symbol} Price', line=dict(color='blue')), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['swing_highs'], mode='markers', name='Confirmed Swing Highs', marker=dict(color='red', symbol='diamond-open', size=10)), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['swing_lows'], mode='markers', name='Confirmed Swing Lows', marker=dict(color='green', symbol='diamond-open', size=10)), row=2, col=1)
-        if not trades.empty:
-            entries = trades[trades['type'].isin(['BUY', 'SELL'])]; exits = trades[trades['type'] == 'SL EXIT']
-            fig.add_trace(go.Scatter(x=entries[entries['type']=='BUY']['t'], y=entries[entries['type']=='BUY']['p'], mode='markers', name='Buys', marker=dict(color='lime', symbol='triangle-up', size=10)), row=2, col=1)
-            fig.add_trace(go.Scatter(x=entries[entries['type']=='SELL']['t'], y=entries[entries['type']=='SELL']['p'], mode='markers', name='Sells', marker=dict(color='magenta', symbol='triangle-down', size=10)), row=2, col=1)
-            fig.add_trace(go.Scatter(x=exits['t'], y=exits['p'], mode='markers', name='Stop Loss Exits', marker=dict(color='black', symbol='x', size=8)), row=2, col=1)
-        fig.update_layout(height=800, legend_title='Legend'); return fig
-    st.plotly_chart(plot_results(df_backtest, equity, trades), use_container_width=True)
-    with st.expander("Show Raw Trades Data"): st.dataframe(trades)
+        
+        # --- SAFEGUARD ADDED HERE ---
+        if df_train.empty or len(df_train) < 2:
+            st.error(f"Error: Not enough training data ({len(df_train)} samples) after feature generation. "
+                     "Please try lowering the 'Train/Test Split Ratio' or increasing the 'Number of Data Bars'.")
+        elif df_backtest.empty:
+            st.error(f"Error: Not enough backtesting data ({len(df_backtest)} samples). "
+                     "Please try increasing the 'Train/Test Split Ratio' or the 'Number of Data Bars'.")
+        else:
+            # Continue with the backtest if there is enough data
+            ml_model = train_ml_model(df_train, feature_names)
+            trades, equity = run_backtest_with_causal_exits(df_backtest, ml_model, feature_names, initial_cash, trade_size, risk_aversion_gamma, stop_loss_offset_pct)
+
+            st.success("✅ Backtest complete!")
+            st.header("📊 Performance Summary"); final_equity = equity.iloc[-1]; total_return = (final_equity / initial_cash - 1) * 100
+            st.metric("Final Equity (USD)", f"${final_equity:,.2f}"); st.metric("Total Return", f"{total_return:.2f}%"); st.metric("Total Trades (Entries + Exits)", len(trades))
+            
+            st.header("📈 Charts")
+            def plot_results(df_plot, equity_curve, trades):
+                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Strategy Equity Curve', f'{symbol} Price, Swings & Trades'), row_heights=[0.3, 0.7])
+                fig.add_trace(go.Scatter(x=equity_curve.index, y=equity_curve, mode='lines', name='Equity'), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['close'], mode='lines', name=f'{symbol} Price', line=dict(color='blue')), row=2, col=1)
+                fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['swing_highs'], mode='markers', name='Confirmed Swing Highs', marker=dict(color='red', symbol='diamond-open', size=10)), row=2, col=1)
+                fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['swing_lows'], mode='markers', name='Confirmed Swing Lows', marker=dict(color='green', symbol='diamond-open', size=10)), row=2, col=1)
+                if not trades.empty:
+                    entries = trades[trades['type'].isin(['BUY', 'SELL'])]; exits = trades[trades['type'] == 'SL EXIT']
+                    fig.add_trace(go.Scatter(x=entries[entries['type']=='BUY']['t'], y=entries[entries['type']=='BUY']['p'], mode='markers', name='Buys', marker=dict(color='lime', symbol='triangle-up', size=10)), row=2, col=1)
+                    fig.add_trace(go.Scatter(x=entries[entries['type']=='SELL']['t'], y=entries[entries['type']=='SELL']['p'], mode='markers', name='Sells', marker=dict(color='magenta', symbol='triangle-down', size=10)), row=2, col=1)
+                    fig.add_trace(go.Scatter(x=exits['t'], y=exits['p'], mode='markers', name='Stop Loss Exits', marker=dict(color='black', symbol='x', size=8)), row=2, col=1)
+                fig.update_layout(height=800, legend_title='Legend'); return fig
+            
+            st.plotly_chart(plot_results(df_backtest, equity, trades), use_container_width=True)
+            with st.expander("Show Raw Trades Data"): st.dataframe(trades)
 else:
     st.info("Adjust the parameters in the sidebar and click 'Run Backtest' to begin.")
