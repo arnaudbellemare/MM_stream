@@ -238,7 +238,7 @@ with tab3:
             y=up['denoised_close'], 
             mode='markers', 
             name='Up Label', 
-            marker=dict(color='blue', symbol='circle', size=5)
+            marker=dict(color='cyan', symbol='circle', size=5)
         ), row=1, col=1)
         
         fig_wl.add_trace(go.Scatter(
