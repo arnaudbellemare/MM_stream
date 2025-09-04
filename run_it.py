@@ -237,7 +237,7 @@ with tab3:
         fig_wl.add_trace(go.Scatter(x=down.index, y=down['denoised_close'], mode='markers', name='Down Label', marker=dict(color='red', symbol='circle', size=5)), row=1, col=1)
         
         # --- CHART 2: ORIGINAL PRICE ---
-        fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['close'], name='Original Price', line=dict(color='blue')), row=2, col=1)
+        fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['close'], name='Original Price', line=dict(color='gray')), row=2, col=1)
         
         # --- THIS IS THE NEW MODIFICATION ---
         # Add the same label markers to the second chart, but use the 'close' column for the y-axis
