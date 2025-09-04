@@ -1,0 +1,10 @@
+thalex
+websockets
+numpy
+pandas
+scikit-learn
+joblib
+ccxt
+tseries_patterns
+plotly
+streamlit 
