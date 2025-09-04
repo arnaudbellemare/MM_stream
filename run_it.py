@@ -17,9 +17,8 @@ st.set_page_config(layout="wide", page_title="Bias-Free Market Maker Backtest")
 
 st.title("📈 Bias-Free Market Maker Strategy Backtest")
 st.markdown("""
-This version corrects for **lookahead bias and repainting**.
-- The Savitzky-Golay filter has been **removed** from the labeling and backtesting process.
-- It is replaced by a **causal (non-repainting) swing point detection algorithm** that only confirms a swing after a significant price reversal, mimicking real-time information flow.
+This application runs a bias-free backtest using a causal swing point detection algorithm.
+The caching decorators have been corrected for compatibility with the latest Streamlit versions.
 """)
 
 # ==============================================================================
@@ -54,120 +53,73 @@ def fetch_data(symbol, timeframe, limit):
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']); df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms'); df.set_index('timestamp', inplace=True)
     return df
 
-# --- THIS IS THE NEW, CAUSAL (NON-REPAINTING) SWING POINT DETECTOR ---
 @st.cache_data
 def find_causal_swing_points(prices_tuple, reversal_pct):
     st.info("Detecting causal (non-repainting) swing points...")
-    prices = np.array(prices_tuple)
-    reversal_mult = reversal_pct / 100.0
-    
-    swing_highs = np.full(len(prices), np.nan)
-    swing_lows = np.full(len(prices), np.nan)
-    
-    last_pivot_idx = 0
-    peak_idx, trough_idx = 0, 0
-    trend = 0  # 1 for up, -1 for down
-
+    prices = np.array(prices_tuple); reversal_mult = reversal_pct / 100.0
+    swing_highs = np.full(len(prices), np.nan); swing_lows = np.full(len(prices), np.nan)
+    last_pivot_idx = 0; peak_idx, trough_idx = 0, 0; trend = 0
     for i in range(1, len(prices)):
-        if trend == 1: # Uptrend, look for a peak
-            if prices[i] >= prices[peak_idx]:
-                peak_idx = i
-            # A swing high is CONFIRMED only AFTER price drops by the required percentage
+        if trend == 1:
+            if prices[i] >= prices[peak_idx]: peak_idx = i
             elif prices[i] < prices[peak_idx] * (1 - reversal_mult):
-                swing_highs[peak_idx] = prices[peak_idx] # Mark the peak
-                trend = -1
-                trough_idx = i
-                last_pivot_idx = peak_idx
-        elif trend == -1: # Downtrend, look for a trough
-            if prices[i] <= prices[trough_idx]:
-                trough_idx = i
-            # A swing low is CONFIRMED only AFTER price rises by the required percentage
+                swing_highs[peak_idx] = prices[peak_idx]; trend = -1; trough_idx = i; last_pivot_idx = peak_idx
+        elif trend == -1:
+            if prices[i] <= prices[trough_idx]: trough_idx = i
             elif prices[i] > prices[trough_idx] * (1 + reversal_mult):
-                swing_lows[trough_idx] = prices[trough_idx] # Mark the trough
-                trend = 1
-                peak_idx = i
-                last_pivot_idx = trough_idx
-        else: # No trend yet, waiting for initial breakout
-            if prices[i] > prices[trough_idx] * (1 + reversal_mult):
-                trend = 1
-                peak_idx = i
-            elif prices[i] < prices[peak_idx] * (1 - reversal_mult):
-                trend = -1
-                trough_idx = i
+                swing_lows[trough_idx] = prices[trough_idx]; trend = 1; peak_idx = i; last_pivot_idx = trough_idx
+        else:
+            if prices[i] > prices[trough_idx] * (1 + reversal_mult): trend = 1; peak_idx = i
+            elif prices[i] < prices[peak_idx] * (1 - reversal_mult): trend = -1; trough_idx = i
             if prices[i] > prices[peak_idx]: peak_idx = i
             if prices[i] < prices[trough_idx]: trough_idx = i
-            
     return swing_highs, swing_lows
-# ---
 
 @st.cache_data
 def add_features_and_labels(df, swing_highs, swing_lows):
     st.info("Labeling data and engineering features...")
-    df_copy = df.copy()
-    df_copy['swing_highs'] = swing_highs
-    df_copy['swing_lows'] = swing_lows
-    
-    # Forward-fill the last known swing to define the current regime
-    df_copy['last_swing_high'] = df_copy['swing_highs'].ffill()
-    df_copy['last_swing_low'] = df_copy['swing_lows'].ffill()
-    
-    # Determine the label based on which swing was more recent
-    df_copy['high_t'] = df_copy['swing_highs'].notna().cumsum()
-    df_copy['low_t'] = df_copy['swing_lows'].notna().cumsum()
-    
-    # If the count of highs is greater than lows, the last swing was a high -> downtrend (-1)
-    # If the count of lows is greater than highs, the last swing was a low -> uptrend (+1)
-    df_copy['label'] = np.where(df_copy['high_t'] > df_copy['low_t'], -1, 1)
-    df_copy['label'].iloc[0] = 0 # Start neutral
-    
+    df_copy = df.copy(); df_copy['swing_highs'] = swing_highs; df_copy['swing_lows'] = swing_lows
+    df_copy['last_swing_high'] = df_copy['swing_highs'].ffill(); df_copy['last_swing_low'] = df_copy['swing_lows'].ffill()
+    df_copy['high_t'] = df_copy['swing_highs'].notna().cumsum(); df_copy['low_t'] = df_copy['swing_lows'].notna().cumsum()
+    df_copy['label'] = np.where(df_copy['high_t'] > df_copy['low_t'], -1, 1); df_copy['label'].iloc[0] = 0
     df_copy['return'] = np.log(df_copy['close'] / df_copy['close'].shift(1))
     df_copy['momentum_24'] = np.log(df_copy['close'] / df_copy['close'].shift(24))
     df_copy['volatility_24'] = df_copy['return'].rolling(window=24).std() * np.sqrt(24 * 365.25)
-    df_copy['target'] = df_copy['label'].shift(-8) # Predict 8 bars ahead
+    df_copy['target'] = df_copy['label'].shift(-8)
     df_copy.dropna(inplace=True)
     return df_copy
 
-@st.cache_data(allow_output_mutation=True)
-def train_ml_model(df_train, feature_names):
-    st.info("Training Machine Learning model..."); X_train = df_train[feature_names]; y_train = df_train['target']
+# --- CORRECTED LINE ---
+# Using @st.cache_resource for the ML model, as it's a complex, non-data object.
+@st.cache_resource
+def train_ml_model(_df_train, feature_names):
+# --- END CORRECTION ---
+    st.info("Training Machine Learning model..."); X_train = _df_train[feature_names]; y_train = _df_train['target']
     model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42, n_jobs=-1)
     model.fit(X_train, y_train); return model
 
+@st.cache_data
 def run_backtest_with_causal_exits(_df_backtest, _model, feature_names, cash, size, gamma, stop_offset):
     st.info(f"Running bias-free backtest for {_model.__class__.__name__}...")
-    
-    position, equity, trades = 0.0, [cash], []
-    in_trade, stop_loss = False, 0.0
-    
+    position, equity, trades = 0.0, [cash], []; in_trade, stop_loss = False, 0.0
     for i in range(len(_df_backtest)):
         current_bar = _df_backtest.iloc[i]
-        
-        # 1. CHECK FOR EXITS FIRST (using data only up to the current bar)
         if in_trade:
             if position > 0 and current_bar['low'] <= stop_loss:
                 cash += position * stop_loss; trades.append({'t':current_bar.name, 'type':'SL EXIT', 'p':stop_loss}); position = 0.0; in_trade = False
             elif position < 0 and current_bar['high'] >= stop_loss:
                 cash += position * stop_loss; trades.append({'t':current_bar.name, 'type':'SL EXIT', 'p':stop_loss}); position = 0.0; in_trade = False
-        
-        # 2. CHECK FOR ENTRIES IF NOT IN A TRADE
         if not in_trade:
-            feature_vector = current_bar[feature_names].values.reshape(1, -1)
-            prediction = _model.predict(feature_vector)[0]
-            
+            feature_vector = current_bar[feature_names].values.reshape(1, -1); prediction = _model.predict(feature_vector)[0]
             if prediction != 0:
                 mid=current_bar['close']; vol=current_bar['volatility_24']; res=(mid)-(position*gamma*(vol**2)); spread=(gamma*(vol**2))+(2/gamma)*np.log(1+(gamma/2)); bid,ask=res-spread/2,res+spread/2
-                
-                if prediction == 1 and current_bar['close'] >= bid: # Simple fill logic for backtest
+                if prediction == 1 and current_bar['close'] >= bid:
                     position += size; cash -= size * bid; in_trade = True; trades.append({'t':current_bar.name, 'type':'BUY', 'p':bid})
-                    # Set stop loss using the LAST CONFIRMED swing low available at this time
                     stop_loss = current_bar['last_swing_low'] * (1 - stop_offset / 100)
                 elif prediction == -1 and current_bar['close'] <= ask:
                     position -= size; cash += size * ask; in_trade = True; trades.append({'t':current_bar.name, 'type':'SELL', 'p':ask})
-                    # Set stop loss using the LAST CONFIRMED swing high available at this time
                     stop_loss = current_bar['last_swing_high'] * (1 + stop_offset / 100)
-
         equity.append(cash + position * current_bar['close'])
-        
     return pd.DataFrame(trades), pd.Series(equity, index=_df_backtest.index)
 
 # ==============================================================================
@@ -176,44 +128,30 @@ def run_backtest_with_causal_exits(_df_backtest, _model, feature_names, cash, si
 
 if st.sidebar.button("🚀 Run Backtest"):
     with st.spinner("Executing full backtest pipeline... Please wait."):
-        # 1. Data and Causal Swing Points
         df_raw = fetch_data(symbol, timeframe, data_limit)
         swing_highs, swing_lows = find_causal_swing_points(tuple(df_raw['close']), min_trend_pct)
-        
-        # 2. Features and Data Split
         df_featured = add_features_and_labels(df_raw, swing_highs, swing_lows)
         split_idx = int(len(df_featured) * train_test_split_ratio)
         df_train = df_featured.iloc[:split_idx]; df_backtest = df_featured.iloc[split_idx:]
         feature_names = ['momentum_24', 'volatility_24']
-        
-        # 3. Train Model
         ml_model = train_ml_model(df_train, feature_names)
-
-        # 4. Run Backtest
         trades, equity = run_backtest_with_causal_exits(df_backtest, ml_model, feature_names, initial_cash, trade_size, risk_aversion_gamma, stop_loss_offset_pct)
-
     st.success("✅ Backtest complete!")
-
-    # Display summary metrics
     st.header("📊 Performance Summary"); final_equity = equity.iloc[-1]; total_return = (final_equity / initial_cash - 1) * 100
     st.metric("Final Equity (USD)", f"${final_equity:,.2f}"); st.metric("Total Return", f"{total_return:.2f}%"); st.metric("Total Trades (Entries + Exits)", len(trades))
-    
     st.header("📈 Charts")
     def plot_results(df_plot, equity_curve, trades):
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Strategy Equity Curve', f'{symbol} Price, Swings & Trades'), row_heights=[0.3, 0.7])
         fig.add_trace(go.Scatter(x=equity_curve.index, y=equity_curve, mode='lines', name='Equity'), row=1, col=1)
         fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['close'], mode='lines', name=f'{symbol} Price', line=dict(color='blue')), row=2, col=1)
-        # Plot Causal Swing Points
         fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['swing_highs'], mode='markers', name='Confirmed Swing Highs', marker=dict(color='red', symbol='diamond-open', size=10)), row=2, col=1)
         fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['swing_lows'], mode='markers', name='Confirmed Swing Lows', marker=dict(color='green', symbol='diamond-open', size=10)), row=2, col=1)
-        # Plot Trades
         if not trades.empty:
             entries = trades[trades['type'].isin(['BUY', 'SELL'])]; exits = trades[trades['type'] == 'SL EXIT']
             fig.add_trace(go.Scatter(x=entries[entries['type']=='BUY']['t'], y=entries[entries['type']=='BUY']['p'], mode='markers', name='Buys', marker=dict(color='lime', symbol='triangle-up', size=10)), row=2, col=1)
             fig.add_trace(go.Scatter(x=entries[entries['type']=='SELL']['t'], y=entries[entries['type']=='SELL']['p'], mode='markers', name='Sells', marker=dict(color='magenta', symbol='triangle-down', size=10)), row=2, col=1)
             fig.add_trace(go.Scatter(x=exits['t'], y=exits['p'], mode='markers', name='Stop Loss Exits', marker=dict(color='black', symbol='x', size=8)), row=2, col=1)
         fig.update_layout(height=800, legend_title='Legend'); return fig
-    
     st.plotly_chart(plot_results(df_backtest, equity, trades), use_container_width=True)
     with st.expander("Show Raw Trades Data"): st.dataframe(trades)
 else:
