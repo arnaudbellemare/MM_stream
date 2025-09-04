@@ -1,19 +1,21 @@
 # ==============================================================================
 # PYTHON PACKAGE REQUIREMENTS FOR THE STREAMLIT APP
 # ==============================================================================
-# This version REMOVES the problematic 'tseries_patterns' library.
+# This file lists all necessary packages for the Streamlit Cloud environment.
 # ==============================================================================
 
 # Core libraries for numerical operations and data structures
 numpy
 pandas
-scipy
 
-# Machine learning
+# Machine learning library (provides sklearn)
 scikit-learn
-joblib
 
-# Data and Web App
+# For fetching historical market data from exchanges
 ccxt
+
+# For creating interactive charts
 plotly
+
+# The web application framework
 streamlit
