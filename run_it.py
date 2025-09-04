@@ -170,9 +170,10 @@ with tab3:
 
     # --- THIS IS THE CORRECTED, ROBUST AUTO-LABELING FUNCTION ---
     @st.cache_data
-    def auto_labeling(data_list, timestamp_list, w):
-        # Ensure timestamp_list is a Pandas Series for robust comparisons
-        timestamps = pd.Series(timestamp_list)
+    def auto_labeling(data_tuple, timestamp_tuple, w):
+        # Convert hashable tuples back to the types our logic needs
+        data_list = np.array(data_tuple)
+        timestamps = pd.Series(timestamp_tuple)
         
         labels = np.zeros(len(data_list)); FP = data_list[0]; x_H = data_list[0]; HT = timestamps[0]; x_L = data_list[0]; LT = timestamps[0]; Cid = 0; FP_N = 0
         for i in range(len(data_list)):
@@ -182,7 +183,6 @@ with tab3:
             if Cid > 0:
                 if data_list[i] > x_H: x_H = data_list[i]; HT = timestamps[i]
                 if data_list[i] < x_H - x_H * w and LT < HT:
-                    # Use boolean indexing which is safe and efficient
                     mask = (timestamps > LT) & (timestamps <= HT)
                     labels[mask] = 1
                     x_L = data_list[i]; LT = timestamps[i]; Cid = -1
@@ -207,7 +207,13 @@ with tab3:
         uthresh = sigma * np.sqrt(2 * np.log(len(data_train))); coeffs_thresh = [coeffs[0]] + [pywt.threshold(c, uthresh, mode='soft') for c in coeffs[1:]]; data_train_denoised = pywt.waverec(coeffs_thresh, 'db4')
         if threshold_type_wl == "Volatility-based": w_used = rogers_satchell_volatility(df_wl); st.write(f"**Volatility-based threshold (w):** `{w_used:.4f}`")
         else: w_used = constant_w_wl; st.write(f"**Using constant threshold (w):** `{w_used:.4f}`")
-        st.info("Auto-labeling denoised data..."); labels_wavelet = auto_labeling(data_train_denoised, timestamps_train, w_used); df_wl['label'] = labels_wavelet
+        
+        # --- CRITICAL FIX: Convert unhashable types to tuples before caching ---
+        st.info("Auto-labeling denoised data...")
+        labels_wavelet = auto_labeling(tuple(data_train_denoised), tuple(timestamps_train), w_used)
+        df_wl['label'] = labels_wavelet
+        # ---
+        
         gt_labels = np.sign(df_wl['close'].shift(-1) - df_wl['close']).fillna(0)
         accuracy = accuracy_score(gt_labels, labels_wavelet); precision = precision_score(gt_labels, labels_wavelet, average='weighted'); recall = recall_score(gt_labels, labels_wavelet, average='weighted')
         st.header("Performance Metrics"); col1, col2, col3 = st.columns(3)
