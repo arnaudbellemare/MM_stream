@@ -215,46 +215,23 @@ with tab3:
         else: w_used = constant_w_wl; st.write(f"**Using constant threshold (w):** `{w_used:.4f}`")
         
         st.info("Auto-labeling denoised data...")
-        # Convert unhashable types to tuples for caching
         labels_wavelet = auto_labeling(tuple(data_train_denoised), tuple(timestamps_train), w_used)
         df_wl['label'] = labels_wavelet
         
         gt_labels = np.sign(df_wl['close'].shift(-1) - df_wl['close']).fillna(0)
-        accuracy = accuracy_score(gt_labels, labels_wavelet)
-        precision = precision_score(gt_labels, labels_wavelet, average='weighted', zero_division=0)
-        recall = recall_score(gt_labels, labels_wavelet, average='weighted', zero_division=0)
-        
-        st.header("Performance Metrics")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Accuracy", f"{accuracy:.2%}")
-        col2.metric("Precision", f"{precision:.2%}")
-        col3.metric("Recall", f"{recall:.2%}")
-        
+        accuracy = accuracy_score(gt_labels, labels_wavelet); precision = precision_score(gt_labels, labels_wavelet, average='weighted', zero_division=0); recall = recall_score(gt_labels, labels_wavelet, average='weighted', zero_division=0)
+        st.header("Performance Metrics"); col1, col2, col3 = st.columns(3)
+        col1.metric("Accuracy", f"{accuracy:.2%}"); col2.metric("Precision", f"{precision:.2%}"); col3.metric("Recall", f"{recall:.2%}")
         st.header("Charts")
-        fig_wl = make_subplots(
-            rows=2, 
-            cols=1, 
-            shared_xaxes=True, 
-            vertical_spacing=0.1, 
-            subplot_titles=('Denoised Data & Labels', f'Original Price for {symbol_wl}')
-        )
+        fig_wl = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Denoised Data & Labels', f'Original Price for {symbol_wl}'))
+        fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['denoised_close'], name='Wavelet Denoised Price', line=dict(color='orange')), row=1, col=1)
+        up = df_wl[df_wl['label']==1]; down = df_wl[df_wl['label']==-1]
         
-        # Row 1: Denoised Data and Labels
-        fig_wl.add_trace(go.Scatter(x=df_wl.index, y=data_train_denoised, name='Wavelet Denoised Price', line=dict(color='orange')), row=1, col=1)
-        up = df_wl[df_wl['label']==1]
-        down = df_wl[df_wl['label']==-1]
-        fig_wl.add_trace(go.Scatter(x=up.index, y=up['close'], mode='markers', name='Up Label', marker=dict(color='green', symbol='triangle-up')), row=1, col=1)
-        fig_wl.add_trace(go.Scatter(x=down.index, y=down['close'], mode='markers', name='Down Label', marker=dict(color='red', symbol='triangle-down')), row=1, col=1)
+        # --- CRITICAL FIX 2: Plot markers on the DENOISED price line ---
+        fig_wl.add_trace(go.Scatter(x=up.index, y=up['denoised_close'], mode='markers', name='Up Label', marker=dict(color='green', symbol='dot')), row=1, col=1)
+        fig_wl.add_trace(go.Scatter(x=down.index, y=down['denoised_close'], mode='markers', name='Down Label', marker=dict(color='red', symbol='dot')), row=1, col=1)
+        # ---
         
-        # Row 2: Original Price
         fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['close'], name='Original Price', line=dict(color='blue')), row=2, col=1)
-        
-        # --- THIS IS THE KEY MODIFICATION ---
-        # Set a fixed height for the entire figure and add a legend title
-        fig_wl.update_layout(
-            height=800,  # You can adjust this value (e.g., 600, 900) to your preference
-            legend_title_text='Legend'
-        )
-        # --- END MODIFICATION ---
-        
+        fig_wl.update_layout(height=800, legend_title_text='Legend')
         st.plotly_chart(fig_wl, use_container_width=True)
