@@ -1,4 +1,10 @@
-# Build-time dependency (good practice to list it)
+# ==============================================================================
+# PYTHON PACKAGE REQUIREMENTS FOR STREAMLIT APP
+# ==============================================================================
+# This file is used by Streamlit Cloud to install dependencies.
+# ==============================================================================
+
+# Build-time dependency (MUST be listed before packages that need it)
 Cython
 
 # Core libraries
@@ -12,6 +18,9 @@ joblib
 
 # Data and Web App
 ccxt
-tseries_patterns
 plotly
 streamlit
+
+# Problematic package: Install it without creating an isolated build environment.
+# This forces pip to use the Cython we installed from the line above.
+tseries_patterns --no-build-isolation
