@@ -1,10 +1,37 @@
+# ==============================================================================
+# PYTHON PACKAGE REQUIREMENTS FOR THE STREAMLIT BACKTESTER
+# ==============================================================================
+#
+# Install these packages using the command:
+# pip install -r requirements.txt
+#
+# ==============================================================================
+
+# Build-time dependency for tseries_patterns
+Cython
+
+# Core library for connecting to Thalex (for live bot)
 thalex
+
+# For handling WebSocket connections
 websockets
+
+# Core libraries for numerical operations and data structures
 numpy
 pandas
+
+# Machine learning and metrics
 scikit-learn
 joblib
+
+# For fetching historical market data
 ccxt
+
+# For financial time series labeling (requires Cython)
 tseries_patterns
+
+# For data visualization
 plotly
-streamlit 
+
+# The web application framework
+streamlit
