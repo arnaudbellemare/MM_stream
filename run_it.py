@@ -17,8 +17,10 @@ st.set_page_config(layout="wide", page_title="Robust Market Maker Backtest")
 
 st.title("🏆 Robust Market Maker Strategy Backtest")
 st.markdown("""
-This version contains a **complete rewrite of the labeling logic** to definitively fix the "0 training samples" error.
-- The core of the app now uses a professional, causal (non-repainting) ZigZag algorithm to find swing points and define market regimes. This is a much more robust and reliable method.
+This application is a practical implementation of the concepts outlined in the `tr8dr.github.io` posts.
+- It uses a **causal, bias-free** algorithm to perform the **"offline labeling"** of market regimes.
+- It trains an ML model to **forecast the future regime**, solving the **"moving average lag"** problem.
+- It provides an interactive way to test for **non-stationarity**, the key challenge identified in the HMM post.
 """)
 
 # ==============================================================================
@@ -43,7 +45,7 @@ risk_aversion_gamma = st.sidebar.slider("Risk Aversion (Gamma)", 0.01, 0.5, 0.05
 
 
 # ==============================================================================
-# CORE BIAS-FREE FUNCTIONS (NEW AND ROBUST)
+# CORE BIAS-FREE FUNCTIONS
 # ==============================================================================
 
 @st.cache_data
@@ -53,64 +55,35 @@ def fetch_data(symbol, timeframe, limit):
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']); df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms'); df.set_index('timestamp', inplace=True)
     return df
 
-# --- THIS IS THE NEW, ROBUST, AND CORRECT LABELING FUNCTION ---
+# ---
+# THIS FUNCTION IS THE BIAS-FREE IMPLEMENTATION OF THE "OFFLINE LABELER" CONCEPT
+# from the "Classifying returns" post. It finds swing points and defines the
+# up-trends, down-trends, and neutral periods.
+# ---
 @st.cache_data
 def find_and_label_causal_swings(prices_tuple, reversal_pct):
     st.info("Detecting causal swings and labeling regimes...")
-    prices = np.array(prices_tuple)
-    reversal_mult = reversal_pct / 100.0
-    
-    labels = np.zeros(len(prices))
-    swing_highs = np.full(len(prices), np.nan)
-    swing_lows = np.full(len(prices), np.nan)
-    
-    peak_price, trough_price = prices[0], prices[0]
-    peak_idx, trough_idx = 0, 0
-    trend = 0 # 1 for up, -1 for down
-
+    prices = np.array(prices_tuple); reversal_mult = reversal_pct / 100.0
+    labels = np.zeros(len(prices)); swing_highs = np.full(len(prices), np.nan); swing_lows = np.full(len(prices), np.nan)
+    peak_price, trough_price = prices[0], prices[0]; peak_idx, trough_idx = 0, 0; trend = 0
     for i in range(1, len(prices)):
-        if trend == 1: # In an uptrend, look for a peak
-            if prices[i] >= peak_price:
-                peak_price = prices[i]
-                peak_idx = i
-            elif prices[i] < peak_price * (1 - reversal_mult):
-                swing_highs[peak_idx] = peak_price
-                trend = -1
-                trough_price = prices[i]
-                trough_idx = i
-        elif trend == -1: # In a downtrend, look for a trough
-            if prices[i] <= trough_price:
-                trough_price = prices[i]
-                trough_idx = i
-            elif prices[i] > trough_price * (1 + reversal_mult):
-                swing_lows[trough_idx] = trough_price
-                trend = 1
-                peak_price = prices[i]
-                peak_idx = i
-        else: # No trend established yet, look for initial breakout
-            if prices[i] > trough_price * (1 + reversal_mult):
-                trend = 1
-                peak_price = prices[i]
-                peak_idx = i
-            elif prices[i] < peak_price * (1 - reversal_mult):
-                trend = -1
-                trough_price = prices[i]
-                trough_idx = i
-            # Update initial peak/trough trackers
+        if trend == 1:
+            if prices[i] >= peak_price: peak_price = prices[i]; peak_idx = i
+            elif prices[i] < peak_price * (1 - reversal_mult): swing_highs[peak_idx] = peak_price; trend = -1; trough_price = prices[i]; trough_idx = i
+        elif trend == -1:
+            if prices[i] <= trough_price: trough_price = prices[i]; trough_idx = i
+            elif prices[i] > trough_price * (1 + reversal_mult): swing_lows[trough_idx] = trough_price; trend = 1; peak_price = prices[i]; peak_idx = i
+        else:
+            if prices[i] > trough_price * (1 + reversal_mult): trend = 1; peak_price = prices[i]; peak_idx = i
+            elif prices[i] < peak_price * (1 - reversal_mult): trend = -1; trough_price = prices[i]; trough_idx = i
             if prices[i] > peak_price: peak_price = prices[i]; peak_idx = i
             if prices[i] < trough_price: trough_price = prices[i]; trough_idx = i
-    
-    # Label the data based on the final trend direction
     last_label = 0
     for i in range(len(prices)):
-        if not np.isnan(swing_lows[i]):
-            last_label = 1 # Trend is UP after a confirmed low
-        elif not np.isnan(swing_highs[i]):
-            last_label = -1 # Trend is DOWN after a confirmed high
+        if not np.isnan(swing_lows[i]): last_label = 1
+        elif not np.isnan(swing_highs[i]): last_label = -1
         labels[i] = last_label
-        
     return swing_highs, swing_lows, labels
-# ---
 
 @st.cache_data
 def add_features(df, swing_highs, swing_lows, labels):
@@ -120,10 +93,15 @@ def add_features(df, swing_highs, swing_lows, labels):
     if df_copy['last_swing_high'].isnull().all() or df_copy['last_swing_low'].isnull().all():
         st.warning("Could not find any swing points with the current settings to create features. Returning empty DataFrame.")
         return pd.DataFrame()
+    
+    # --- THIS SECTION PREPARES THE DATA FOR THE FORECASTING MODEL ---
+    # As suggested by the "Moving averages" post, we need to predict the future.
+    # We define our 'target' as the market state 8 bars from now.
     df_copy['return'] = np.log(df_copy['close'] / df_copy['close'].shift(1))
     df_copy['momentum_24'] = np.log(df_copy['close'] / df_copy['close'].shift(24))
     df_copy['volatility_24'] = df_copy['return'].rolling(window=24).std() * np.sqrt(24 * 365.25)
-    df_copy['target'] = df_copy['label'].shift(-8); df_copy.dropna(inplace=True)
+    df_copy['target'] = df_copy['label'].shift(-8) # This is the key to solving the "lag" problem.
+    df_copy.dropna(inplace=True)
     return df_copy
 
 @st.cache_resource
@@ -146,6 +124,7 @@ def run_backtest_with_causal_exits(_df_backtest, _model, feature_names, cash, si
             elif position < 0 and current_bar['high'] >= stop_loss:
                 cash += position * stop_loss; trades.append({'t':current_bar.name, 'type':'SL EXIT', 'p':stop_loss}); position = 0.0; in_trade = False
         if not in_trade:
+            # Here, the model uses current features to predict the future state.
             feature_vector = current_bar[feature_names].values.reshape(1, -1); prediction = _model.predict(feature_vector)[0]
             if prediction != 0:
                 mid=current_bar['close']; vol=current_bar['volatility_24']; res=(mid)-(position*gamma*(vol**2)); spread=(gamma*(vol**2))+(2/gamma)*np.log(1+(gamma/2)); bid,ask=res-spread/2,res+spread/2
@@ -167,15 +146,14 @@ if st.sidebar.button("🚀 Run Backtest"):
         swing_highs, swing_lows, labels = find_and_label_causal_swings(tuple(df_raw['close']), min_trend_pct)
         df_featured = add_features(df_raw, swing_highs, swing_lows, labels)
         if df_featured.empty:
-            st.error("Error: The feature engineering process resulted in an empty dataset. This can happen if no confirmed swing points were found with the current settings. Please try lowering the 'Min Reversal Pct to Confirm Swing' or increasing the 'Number of Data Bars'.")
+            st.error("Error: The feature engineering process resulted in an empty dataset. Please adjust settings.")
         else:
-            split_idx = int(len(df_featured) * train_test_split_ratio)
-            df_train = df_featured.iloc[:split_idx]; df_backtest = df_featured.iloc[split_idx:]
+            split_idx = int(len(df_featured) * train_test_split_ratio); df_train = df_featured.iloc[:split_idx]; df_backtest = df_featured.iloc[split_idx:]
             feature_names = ['momentum_24', 'volatility_24']
             if df_train.empty or len(df_train) < 50:
-                st.error(f"Error: Not enough training data ({len(df_train)} samples) after splitting. Try adjusting the 'Train/Test Split Ratio' or increasing data size.")
+                st.error(f"Error: Not enough training data ({len(df_train)} samples) after splitting. Please adjust settings.")
             elif df_backtest.empty:
-                st.error(f"Error: Not enough backtesting data ({len(df_backtest)} samples). Try adjusting the 'Train/Test Split Ratio' or increasing data size.")
+                st.error(f"Error: Not enough backtesting data ({len(df_backtest)} samples). Please adjust settings.")
             else:
                 ml_model = train_ml_model(df_train, feature_names)
                 trades, equity = run_backtest_with_causal_exits(df_backtest, ml_model, feature_names, initial_cash, trade_size, risk_aversion_gamma, stop_loss_offset_pct)
