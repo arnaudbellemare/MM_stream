@@ -216,16 +216,22 @@ def generate_residual_momentum_factor(asset_prices, market_prices, window=30):
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
+# ==============================================================================
+# TAB 3: COMPREHENSIVE WATCHLIST
+# ==============================================================================
 with tab3:
     st.header("📈 Comprehensive Watchlist")
-    st.markdown("A unified watchlist combining **AI-driven predictions** with **robust statistical analysis**.")
+    st.markdown("""
+    This powerful tool generates a unified watchlist by combining **AI-driven predictions** with **robust statistical analysis**.
+    - **MLP Signal & Confidence:** A unique neural network is trained for each asset to predict the next market move and its confidence.
+    - **Statistical Metrics:** Includes rule-based momentum phase, wavelet-based performance, and residual momentum.
+    """)
     st.sidebar.header("📈 Watchlist Configuration")
     min_volume_wl = st.sidebar.number_input("Minimum 24h Quote Volume", value=250000, key="wl_min_vol")
     data_limit_wl = st.sidebar.slider("Data Bars for Analysis", 500, 2000, 1500, key="wl_limit")
 
-    @st.cache_data(ttl=3600*2)
+    @st.cache_data(ttl=3600 * 2) # Cache results for 2 hours
     def generate_comprehensive_watchlist(symbols, timeframe, limit):
-        # ... (This function remains exactly as in the previous step) ...
         st.info(f"Starting comprehensive analysis for {len(symbols)} tokens...")
         results = []
         progress_bar = st.progress(0, text="Initializing analysis...")
@@ -239,8 +245,6 @@ with tab3:
                 df = fetch_data(symbol, timeframe, limit)
                 if df.empty or len(df) < 100: continue
                 
-                # MLP Prediction, Market Phase, Wavelet, Residual Momentum calculations...
-                # This complex logic is kept as is.
                 # --- 1. MLP Prediction ---
                 df_mlp = df.copy()
                 df_mlp['ret_fast'] = df_mlp['close'].pct_change(7)
@@ -302,29 +306,57 @@ with tab3:
 
     if st.sidebar.button("📈 Run Comprehensive Analysis", key="run_wl"):
         watchlist_symbols = get_filtered_tickers(min_volume_wl)
-        if not watchlist_symbols: st.error("No tickers met the filter criteria.")
+        
+        if not watchlist_symbols:
+            st.error("No tickers met the filter criteria. Watchlist is empty.")
         else:
             df_watchlist = generate_comprehensive_watchlist(watchlist_symbols, '1d', data_limit_wl)
-            if df_watchlist.empty: st.warning("Analysis complete, but no data could be generated.")
+            
+            if df_watchlist.empty:
+                st.warning("Analysis complete, but no data could be generated for the watchlist.")
             else:
                 col1, col2 = st.columns([3, 1])
+                
                 with col1:
                     st.subheader("Comprehensive Market Watchlist")
                     df_display = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
+                    
                     df_display['Confidence'] = df_display['Confidence'].map('{:.1%}'.format)
                     df_display['Bull/Bear Bias'] = df_display['Bull/Bear Bias'].map('{:+.2%}'.format)
                     df_display['Net BPS'] = df_display['Net BPS'].map('{:,.0f}'.format)
                     df_display['Wavelet Accuracy'] = df_display['Wavelet Accuracy'].map('{:.1%}'.format)
                     df_display['Residual Momentum'] = df_display['Residual Momentum'].map('{:+.2f}'.format)
-                    st.dataframe(df_display[['Token', 'MLP Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias', 'Net BPS', 'Wavelet Accuracy', 'Residual Momentum']], use_container_width=True, hide_index=True)
+                    
+                    column_order = [
+                        'Token', 'MLP Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias',
+                        'Net BPS', 'Wavelet Accuracy', 'Residual Momentum'
+                    ]
+                    st.dataframe(df_display[column_order], use_container_width=True, hide_index=True)
+
                 with col2:
                     st.subheader("Market Sentiment")
+                    # --- NEW: Centered markdown title for better placement ---
+                    st.markdown("<h5 style='text-align: center;'>Market Phase Distribution</h5>", unsafe_allow_html=True)
+                    
                     phase_counts = df_watchlist['Market Phase'].value_counts()
-                    phase_colors = {'Bull': 'mediumseagreen', 'Bear': 'crimson', 'Correction': 'orange', 'Rebound': 'deepskyblue'}
-                    fig_donut = px.pie(values=phase_counts.values, names=phase_counts.index, hole=0.4, title="Market Phase Distribution", color=phase_counts.index, color_discrete_map=phase_colors)
+                    
+                    phase_colors = {
+                        'Bull': 'mediumseagreen', 'Bear': 'crimson',
+                        'Correction': 'orange', 'Rebound': 'deepskyblue'
+                    }
+
+                    fig_donut = px.pie(
+                        values=phase_counts.values, 
+                        names=phase_counts.index,
+                        hole=0.4,
+                        # title="Market Phase Distribution", # <-- REMOVED from here
+                        color=phase_counts.index,
+                        color_discrete_map=phase_colors
+                    )
                     fig_donut.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+percent+value')
-                    fig_donut.update_layout(showlegend=False, margin=dict(t=40, b=0, l=0, r=0), title_x=0.5)
-                    st.plotly_chart(fig_donut, use_container_width=True)
+                    # Set top margin to 0 as the title is now handled by Streamlit
+                    fig_donut.update_layout(showlegend=False, margin=dict(t=0, b=20, l=20, r=20))
+                    st.plotly_chart(fig_donut, use_container_width=True)```
 
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
