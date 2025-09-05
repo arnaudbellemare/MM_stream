@@ -182,7 +182,10 @@ with tab3:
     data_limit_wl = st.sidebar.slider("Data Bars for Analysis", 500, 2000, 1500, key="wl_limit")
     
     # --- Helper Functions Specific to this Tab ---
-    STABLECOINS = {'USDC', 'DAI', 'BUSD', 'TUSD', 'USDT', 'UST'}
+    STABLECOINS = { 'USDC', 'DAI', 'BUSD', 'TUSD', 'PAX', 'GUSD', 'USDK', 'UST', 'SUSD', 'FRAX', 'LUSD', 'MIM', 'USDQ',
+    'TBTC', 'WBTC', 'EUL', 'EUR', 'EURT', 'USDS', 'USTS', 'USTC', 'USDR', 'PYUSD', 'EURR', 'GBP', 'AUD', 'EURQ',
+    'T', 'USDG', 'WAXL', 'IDEX', 'FIS', 'CSM', 'MV', 'POWR', 'ATLAS', 'XCN', 'BOBA', 'OXY', 'BNC', 'POLIS', 'AIR',
+    'C98', 'BODEN', 'HDX', 'MSOL', 'REP', 'ANLOG', 'RLUSD', 'USDT','EUROP'}
 
     @st.cache_data(ttl=3600)
     def get_filtered_tickers(min_quote_volume):
@@ -345,7 +348,7 @@ with tab3:
                 col1, col2 = st.columns([3, 1]) # 3 parts for the table, 1 for the chart
                 
                 with col1:
-                    st.subheader(" 종합 시장 분석 ওয়াচলিস্ট") # "Comprehensive Market Analysis Watchlist"
+                    st.subheader(" Comprehensive Market Analysis Watchlist ") # "Comprehensive Market Analysis Watchlist"
                     # --- Formatting & Sorting ---
                     df_display = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
                     
