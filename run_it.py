@@ -356,7 +356,7 @@ with tab3:
                     fig_donut.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+percent+value')
                     # Set top margin to 0 as the title is now handled by Streamlit
                     fig_donut.update_layout(showlegend=False, margin=dict(t=0, b=20, l=20, r=20))
-                    st.plotly_chart(fig_donut, use_container_width=True)```
+                    st.plotly_chart(fig_donut, use_container_width=True)
 
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
