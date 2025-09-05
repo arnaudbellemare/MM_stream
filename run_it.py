@@ -341,6 +341,9 @@ with tab3:
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
 # ==============================================================================
+# ==============================================================================
+# TAB 4: WAVELET SIGNAL VISUALIZER
+# ==============================================================================
 with tab4:
     st.header("🌊 Wavelet Signal Visualizer")
     st.markdown("This tool denoises price data using wavelets and applies an auto-labeling algorithm to identify potential trend phases. The resulting signals are plotted directly on the price chart.")
@@ -389,11 +392,9 @@ with tab4:
                 down_signals = df_wv[df_wv['label'] == -1]
                 fig_wv.add_trace(go.Scatter(x=down_signals.index, y=down_signals['close'], mode='markers', name='Down Signal', marker=dict(color='crimson', size=7, symbol='circle')))
 
-                # --- NEW: Updated annotation with subtitle ---
-                # We use HTML-like tags for formatting within a single annotation.
-                # '<b>' makes the symbol bold. '<br>' creates a line break.
-                # '<sup>' makes the text smaller, like a superscript.
-                watermark_text = f"<b>{symbol_wv}</b><br><sup>Permutation Research</sup>"
+                # --- NEW: Annotation with centered subtitle ---
+                # Using the <sub> tag makes the text smaller and lower, perfect for a subtitle.
+                watermark_text = f"<b>{symbol_wv}</b><br><sub>Permutation Research ©</sub>"
                 
                 fig_wv.add_annotation(
                     text=watermark_text,
@@ -405,8 +406,9 @@ with tab4:
                         size=40,  # Font size for the main ticker
                         color="rgba(0, 0, 0, 0.2)"
                     ),
-                    align="left",
-                    yanchor="top" # Anchors the text from the top
+                    align="center", # This centers the text lines relative to each other
+                    xanchor="left", # This pins the text block to the left edge of the coordinate
+                    yanchor="top"   # This pins the text block to the top edge of the coordinate
                 )
                 # --- END of new code ---
 
