@@ -29,21 +29,17 @@ st.markdown("An interactive dashboard for backtesting strategies and analyzing a
 # ==============================================================================
 @st.cache_data
 def fetch_data(symbol, timeframe, limit):
-    # This info message is now inside the function that calls it, to avoid clutter
-    # st.info(f"Fetching {limit} bars of {symbol} {timeframe} data from Kraken...")
     exchange = ccxt.kraken()
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
         if len(ohlcv) == 0:
-            st.warning(f"No data returned for {symbol} from Kraken. It might be an invalid pair.")
             return pd.DataFrame()
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
         df['stamp'] = df.index
         return df
-    except Exception as e:
-        st.error(f"Failed to fetch data for {symbol}: {e}")
+    except Exception:
         return pd.DataFrame()
 
 
@@ -64,7 +60,7 @@ with tab1:
     st.sidebar.header("⚙️ Backtester Configuration")
     st.sidebar.subheader("Indicator & Data Settings")
     indicator_type = st.sidebar.selectbox("Indicator Type", ["HawkesBVC", "HawkesBSI"], key="bt_indicator")
-    symbol_bt = st.sidebar.text_input("Symbol", "BTC/USDT", key="bt_symbol")
+    symbol_bt = st.sidebar.text_input("Symbol", "BTC/USD", key="bt_symbol")
     timeframe_bt = st.sidebar.selectbox("Timeframe", ['15m', '1h', '4h', '1d'], index=1, key="bt_tf")
     data_limit_bt = st.sidebar.slider("Number of Data Bars", 500, 5000, 1500, key="bt_limit")
     st.sidebar.subheader("Hawkes Process Settings")
@@ -148,7 +144,7 @@ with tab2:
     st.header("Savitzky-Golay Swing Point Detection with SpanB Overlay")
     st.markdown("This is an **offline analysis tool** for visualizing swing points. Note that this method has a **lookahead bias** and is **not** suitable for live trading signals.")
     st.sidebar.subheader("SG Swing Analysis Settings")
-    symbol_sg = st.sidebar.text_input("Symbol", "BTC/USDT", key="sg_symbol")
+    symbol_sg = st.sidebar.text_input("Symbol", "BTC/USD", key="sg_symbol")
     window_short_sg = st.sidebar.slider("SG Fast Window", 5, 51, 33, step=2, key="sg_fast")
     window_long_sg = st.sidebar.slider("SG Slow Window", 101, 301, 257, step=2, key="sg_slow")
     polyorder_sg = st.sidebar.slider("SG Polyorder", 2, 5, 3, key="sg_poly")
@@ -181,42 +177,55 @@ with tab3:
     st.header("Wavelet Auto-Labeling & Performance Metrics")
     st.markdown("This section implements the advanced labeling technique using wavelet denoising and evaluates its performance against a simple ground truth.")
     st.sidebar.subheader("Wavelet Labeling Settings")
-    symbol_wl = st.sidebar.text_input("Symbol", "BTC/USDT", key="wl_symbol")
+    symbol_wl = st.sidebar.text_input("Symbol", "BTC/USD", key="wl_symbol")
     threshold_type_wl = st.sidebar.radio("Threshold Type", ("Volatility-based", "Constant"), key="wl_thresh_type")
     constant_w_wl = st.sidebar.number_input("Constant Threshold (w)", value=0.01, step=0.001, format="%.4f", key="wl_const_w")
 
-    # --- NEW: Exclusion list of stablecoins and other tokens ---
     STABLECOINS = {
         'USDC', 'DAI', 'BUSD', 'TUSD', 'PAX', 'GUSD', 'USDK', 'UST', 'SUSD', 'FRAX', 'LUSD', 'MIM', 'USDQ',
         'TBTC', 'WBTC', 'EUL', 'EUR', 'EURT', 'USDS', 'USTS', 'USTC', 'USDR', 'PYUSD', 'EURR', 'GBP', 'AUD', 'EURQ',
         'T', 'USDG', 'WAXL', 'IDEX', 'FIS', 'CSM', 'MV', 'POWR', 'ATLAS', 'XCN', 'BOBA', 'OXY', 'BNC', 'POLIS', 'AIR',
         'C98', 'BODEN', 'HDX', 'MSOL', 'REP', 'ANLOG', 'RLUSD', 'USDT','EUROP'
     }
-
-    # --- NEW: Function to dynamically fetch and filter tickers ---
+    
+    # --- FINAL, CORRECTED TICKER FETCHING AND FILTERING LOGIC ---
     @st.cache_data(ttl=3600) # Cache for 1 hour
     def get_filtered_tickers(min_quote_volume=100000):
-        st.info("Fetching all available markets from Kraken to find eligible tickers...")
+        st.info("Fetching all tickers from Kraken to filter by live 24h volume...")
         try:
             exchange = ccxt.kraken()
+            tickers = exchange.fetch_tickers()
             markets = exchange.load_markets()
             
             filtered_symbols = []
-            for symbol, market in markets.items():
-                if not market.get('active', False): continue
-                if market.get('quote') not in ['USD', 'USDT']: continue
-                if market.get('base') in STABLECOINS: continue
+            for symbol, ticker in tickers.items():
+                # --- APPLY NEW, STRICT FILTERS ---
+                # 1. Symbol MUST end with /USD. No exceptions.
+                if not symbol.endswith('/USD'):
+                    continue
                 
-                quote_volume = market.get('quoteVolume')
-                if quote_volume is None or quote_volume < min_quote_volume: continue
-                
+                # Check for necessary data points
+                if 'quoteVolume' not in ticker or ticker['quoteVolume'] is None:
+                    continue
+                if symbol not in markets:
+                    continue
+
+                # 2. Live 24h quote volume must be above the threshold.
+                if ticker['quoteVolume'] < min_quote_volume:
+                    continue
+
+                # 3. Base currency must NOT be in the exclusion list.
+                base_currency = markets[symbol].get('base')
+                if base_currency in STABLECOINS:
+                    continue
+
                 filtered_symbols.append(symbol)
-                
-            st.success(f"Found {len(filtered_symbols)} tickers meeting the criteria (USD/USDT quote, >{min_quote_volume:,} volume).")
+            
+            st.success(f"Found {len(filtered_symbols)} tickers ending in /USD with >{min_quote_volume:,} volume.")
             return filtered_symbols
             
         except Exception as e:
-            st.error(f"Failed to fetch or filter markets from Kraken: {e}")
+            st.error(f"Failed to fetch or filter tickers from Kraken: {e}")
             return []
 
     @st.cache_data
@@ -316,9 +325,9 @@ with tab3:
             col1.metric("Accuracy", f"{accuracy:.2%}"); col2.metric("Precision", f"{precision:.2%}"); col3.metric("Recall", f"{recall:.2%}")
 
             with col4:
-                st.subheader("🏆 Dynamic Wavelet Watchlist")
+                st.subheader("🏆 Dynamic USD Watchlist")
                 st.markdown("Auto-filtered tokens ranked by **Net BPS** (strongest directional structure).")
-                # --- THIS IS THE NEW DYNAMIC LOGIC ---
+                
                 watchlist_symbols = get_filtered_tickers(min_quote_volume=100000)
                 if watchlist_symbols:
                     df_watchlist = generate_watchlist(watchlist_symbols, '1h', 1000)
