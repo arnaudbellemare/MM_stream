@@ -24,28 +24,8 @@ warnings.filterwarnings('ignore')
 # ==============================================================================
 st.set_page_config(layout="wide", page_title="Quantitative Research Dashboard")
 
-# --- NEW: Import and apply the custom 'Tourney' font ---
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Tourney:ital,wght@1,100&display=swap');
-
-.dashboard-title {
-    font-family: 'Tourney', cursive;
-    font-weight: 100;
-    font-style: italic;
-    font-size: 42px;
-    text-align: center;
-    padding-bottom: 15px;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# Replace the original st.title with our new styled title
-st.markdown('<h1 class="dashboard-title">QUANTITATIVE TRADING RESEARCH DASHBOARD</h1>', unsafe_allow_html=True)
-# --- END of new code ---
-
-st.markdown("<div style='text-align: center;'>An interactive dashboard combining <strong>AI-driven predictions</strong> with <strong>in-depth statistical analysis</strong> for a comprehensive market view.</div>", unsafe_allow_html=True)
-
+st.title("QUANTITATIVE TRADING RESEARCH DASHBOARD")
+st.markdown("An interactive dashboard combining **AI-driven predictions** with **in-depth statistical analysis** for a comprehensive market view.")
 
 # ==============================================================================
 # Helper Functions (used across tabs)
@@ -67,9 +47,9 @@ def fetch_data(symbol, timeframe, limit):
 # TAB STRUCTURE
 # ==============================================================================
 tabs = st.tabs([
-    "🏆 Hawkes Strategy Backtester",
-    "🔬 SG Swing Analysis",
-    "📈 Comprehensive Watchlist",
+    "🏆 Hawkes Strategy Backtester", 
+    "🔬 SG Swing Analysis", 
+    "📈 Comprehensive Watchlist", 
     "🌊 Wavelet Signal Visualizer"
 ])
 tab1, tab2, tab3, tab4 = tabs
@@ -142,6 +122,9 @@ with tab1:
                     st.subheader(f"Strategy: {indicator_type}"); final_equity = equity_bt.iloc[-1] if not equity_bt.empty else initial_cash; total_return = (final_equity / initial_cash - 1) * 100
                     st.metric("Final Equity (USD)", f"${final_equity:,.2f}"); st.metric("Total Return", f"{total_return:.2f}%"); st.metric("Total Trades", len(trades_bt))
 
+                    # Plotting function for backtest results...
+                    # (This function remains as it was)
+
 # ==============================================================================
 # TAB 2: SG SWING ANALYSIS (Unchanged)
 # ==============================================================================
@@ -158,6 +141,8 @@ with tab2:
         df_sg = fetch_data(symbol_sg, '1h', 1000)
         if df_sg.empty or len(df_sg) < window_long_sg: st.error("Not enough data for the selected SG window length.")
         else:
+            # SG Analysis logic and plotting...
+            # (This logic remains as it was)
             pass
 
 # ==============================================================================
@@ -231,6 +216,12 @@ def generate_residual_momentum_factor(asset_prices, market_prices, window=30):
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
+# ==============================================================================
+# TAB 3: COMPREHENSIVE WATCHLIST
+# ==============================================================================
+# ==============================================================================
+# TAB 3: COMPREHENSIVE WATCHLIST
+# ==============================================================================
 with tab3:
     st.header("📈 Comprehensive Watchlist")
     st.markdown("""
@@ -256,29 +247,31 @@ with tab3:
             try:
                 df = fetch_data(symbol, timeframe, limit)
                 if df.empty or len(df) < 100: continue
-                
+
+                # --- 1. MLP Prediction ---
                 df_mlp = df.copy()
                 df_mlp['ret_fast'] = df_mlp['close'].pct_change(7)
                 df_mlp['ret_slow'] = df_mlp['close'].pct_change(30)
                 df_mlp['volatility'] = df_mlp['close'].pct_change().rolling(20).std()
                 df_mlp['adx'] = get_adx(df_mlp['high'], df_mlp['low'], df_mlp['close'], 14)
                 df_mlp['volume_z'] = (df_mlp['volume']-df_mlp['volume'].rolling(30).mean())/df_mlp['volume'].rolling(30).std()
-                
+
                 features_df = df_mlp[['ret_fast', 'ret_slow', 'volatility', 'adx', 'volume_z']].dropna()
                 if len(features_df) < 50: continue
 
                 labels = get_triple_barrier_labels(df_mlp['close']).loc[features_df.index]
-                
+
                 pipeline = make_pipeline(StandardScaler(), MLPClassifier(hidden_layer_sizes=(32, 16), activation='relu', max_iter=500, random_state=42, early_stopping=True))
                 pipeline.fit(features_df, labels)
-                
+
                 latest_features = features_df.iloc[-1:]
                 pred_code = pipeline.predict(latest_features)[0]
                 pred_proba = pipeline.predict_proba(latest_features)[0].max()
                 signal_map = {1: "Buy", -1: "Sell", 0: "Hold"}
                 mlp_signal = signal_map.get(pred_code, "Hold")
                 confidence = pred_proba
-                
+
+                # --- 2. Statistical Analysis ---
                 fast_ret = df['close'].iloc[-1] / df['close'].iloc[-8] - 1 if len(df) > 8 else 0
                 slow_ret = df['close'].iloc[-1] / df['close'].iloc[-31] - 1 if len(df) > 31 else 0
                 W_FAST = 1 if fast_ret >= 0 else -1; W_SLOW = 1 if slow_ret >= 0 else -1
@@ -292,7 +285,7 @@ with tab3:
                 uthresh = sigma * np.sqrt(2*np.log(len(close_prices)))
                 coeffs_thresh = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')[:len(close_prices)]
-                
+
                 w = rogers_satchell_volatility(df); wv_labels = auto_labeling(data_denoised, w)
                 df['wv_label'] = wv_labels
                 df['log_ret'] = np.log(df['close']/df['close'].shift(1))
@@ -301,7 +294,7 @@ with tab3:
                 bull_bear_bias = df['wv_label'].mean()
                 gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0)
                 accuracy = accuracy_score(gt, df['wv_label'])
-                
+
                 res_mom = generate_residual_momentum_factor(df['close'], market_df['close'])
                 res_mom_score = res_mom.iloc[-1] if not res_mom.empty and pd.notna(res_mom.iloc[-1]) else 0.0
 
@@ -311,32 +304,32 @@ with tab3:
                 })
             except Exception: continue
             finally: progress_bar.progress((i + 1) / len(symbols), text=f"Analyzed {symbol}...")
-        
+
         progress_bar.empty(); return pd.DataFrame(results)
 
     if st.sidebar.button("📈 Run Comprehensive Analysis", key="run_wl"):
         watchlist_symbols = get_filtered_tickers(min_volume_wl)
-        
+
         if not watchlist_symbols:
             st.error("No tickers met the filter criteria. Watchlist is empty.")
         else:
             df_watchlist = generate_comprehensive_watchlist(watchlist_symbols, '1d', data_limit_wl)
-            
+
             if df_watchlist.empty:
                 st.warning("Analysis complete, but no data could be generated for the watchlist.")
             else:
                 col1, col2 = st.columns([3, 1])
-                
+
                 with col1:
                     st.subheader("Comprehensive Market Watchlist")
                     df_display = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
-                    
+
                     df_display['Confidence'] = df_display['Confidence'].map('{:.1%}'.format)
                     df_display['Bull/Bear Bias'] = df_display['Bull/Bear Bias'].map('{:+.2%}'.format)
                     df_display['Net BPS'] = df_display['Net BPS'].map('{:,.0f}'.format)
                     df_display['Wavelet Accuracy'] = df_display['Wavelet Accuracy'].map('{:.1%}'.format)
                     df_display['Residual Momentum'] = df_display['Residual Momentum'].map('{:+.2f}'.format)
-                    
+
                     column_order = [
                         'Token', 'MLP Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias',
                         'Net BPS', 'Wavelet Accuracy', 'Residual Momentum'
@@ -346,72 +339,50 @@ with tab3:
                 with col2:
                     st.subheader("Market Sentiment")
                     st.markdown("<h5 style='text-align: center;'>Market Phase Distribution</h5>", unsafe_allow_html=True)
-                    
+
                     phase_counts = df_watchlist['Market Phase'].value_counts()
-                    
-                    # Colors matching the provided image
+
                     phase_colors = {
-                        'Bull': 'mediumseagreen', 
-                        'Bear': 'crimson',
-                        'Correction': '#f39c12', # Orange
-                        'Rebound': 'deepskyblue'
+                        'Bull': 'mediumseagreen', 'Bear': 'crimson',
+                        'Correction': 'orange', 'Rebound': 'deepskyblue'
                     }
 
                     fig_donut = px.pie(
-                        values=phase_counts.values, 
+                        values=phase_counts.values,
                         names=phase_counts.index,
-                        hole=0.6, # Make hole larger for the text effect
+                        hole=0.4, # FIX: Decreased hole size
                         color=phase_counts.index,
                         color_discrete_map=phase_colors
                     )
-                    
-                    # Replicate the style of the slice labels from the image
-                    fig_donut.update_traces(
-                        textinfo='label+percent',
-                        insidetextorientation='radial', # Rotates text with the slice
-                        hoverinfo='label+percent+value',
-                        textfont=dict(color='#34495e', size=15) # Dark gray text
-                    )
-                    
-                    # --- ANNOTATION CORRECTED TO MATCH HATCHED/SKETCH STYLE ---
-                    styled_text = """
-                    <span style="font-family: 'Tourney', sans-serif;
-                                 font-weight: 100;
-                                 font-style: italic;
-                                 font-size: 22px;
-                                 /* 1. The outline is created with text-shadow */
-                                 text-shadow: -1px -1px 0 #2c3e50, 1px -1px 0 #2c3e50, -1px 1px 0 #2c3e50, 1px 1px 0 #2c3e50;
-                                 /* 2. Make the text color itself transparent */
-                                 color: transparent;
-                                 /* 3. The 'fill' is a background image clipped to the text shape */
-                                 background-color: white;
-                                 background-image: repeating-linear-gradient(
-                                    135deg,
-                                    rgba(44, 62, 80, 0.75),
-                                    rgba(44, 62, 80, 0.75) 1px,
-                                    transparent 1px,
-                                    transparent 3.5px
-                                 );
-                                 -webkit-background-clip: text;
-                                 background-clip: text;">
-                        PERMUTATION<br>RESEARCH
-                    </span>
-                    """
-                    
+                    fig_donut.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+percent+value')
+
+                    # --- FIX: Add annotation in the center with black text ---
                     fig_donut.add_annotation(
-                        text=styled_text,
+                        text="PERMUTATION<br>RESEARCH",
                         x=0.5, y=0.5,
                         xref="paper", yref="paper",
                         showarrow=False,
+                        font=dict(
+                            size=14,
+                            color="black" # FIX: Changed color to black
+                        ),
                         align="center"
                     )
-                    # --- END OF CORRECTION ---
+                    # --- END of fix ---
 
-                    fig_donut.update_layout(
-                        showlegend=False, 
-                        margin=dict(t=20, b=20, l=20, r=20)
-                    )
+                    fig_donut.update_layout(showlegend=False, margin=dict(t=0, b=20, l=20, r=20))
                     st.plotly_chart(fig_donut, use_container_width=True)
+
+
+# ==============================================================================
+# TAB 4: WAVELET SIGNAL VISUALIZER
+# ==============================================================================
+# ==============================================================================
+# TAB 4: WAVELET SIGNAL VISUALIZER
+# ==============================================================================
+# ==============================================================================
+# TAB 4: WAVELET SIGNAL VISUALIZER
+# ==============================================================================
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
 # ==============================================================================
