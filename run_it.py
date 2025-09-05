@@ -344,6 +344,9 @@ with tab3:
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
 # ==============================================================================
+# ==============================================================================
+# TAB 4: WAVELET SIGNAL VISUALIZER
+# ==============================================================================
 with tab4:
     st.header("🌊 Wavelet Signal Visualizer")
     st.markdown("This tool denoises price data using wavelets and applies an auto-labeling algorithm to identify potential trend phases. The resulting signals are plotted directly on the price chart.")
@@ -392,23 +395,21 @@ with tab4:
                 down_signals = df_wv[df_wv['label'] == -1]
                 fig_wv.add_trace(go.Scatter(x=down_signals.index, y=down_signals['close'], mode='markers', name='Down Signal', marker=dict(color='crimson', size=7, symbol='circle')))
 
-                # --- NEW: Annotation with centered subtitle ---
-                # Using the <sub> tag makes the text smaller and lower, perfect for a subtitle.
-                watermark_text = f"<b>{symbol_wv}</b><br><sub>Permutation Research ©</sub>"
+                # --- NEW: Annotation with precise styling for subtitle ---
+                watermark_text = (
+                    f"<span style='font-size: 40px;'><b>{symbol_wv}</b></span><br>"
+                    f"<span style='font-size: 12px; line-height: 0.9em;'>Permutation Research ©</span>"
+                )
                 
                 fig_wv.add_annotation(
                     text=watermark_text,
                     xref="paper", yref="paper",
-                    x=0.05, y=0.98,  # Positioned 5% from left, 2% from top
+                    x=0.05, y=0.98,
                     showarrow=False,
-                    font=dict(
-                        family="Arial, sans-serif",
-                        size=40,  # Font size for the main ticker
-                        color="rgba(0, 0, 0, 0.2)"
-                    ),
-                    align="center", # This centers the text lines relative to each other
-                    xanchor="left", # This pins the text block to the left edge of the coordinate
-                    yanchor="top"   # This pins the text block to the top edge of the coordinate
+                    font=dict(color="rgba(0, 0, 0, 0.2)"),
+                    align="center",
+                    xanchor="left",
+                    yanchor="top"
                 )
                 # --- END of new code ---
 
