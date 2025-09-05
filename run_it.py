@@ -289,25 +289,42 @@ with tab3:
         for i, symbol in enumerate(symbols):
             try:
                 df = fetch_data(symbol, timeframe, limit)
-                if df.empty or len(df) < 120: continue # Min window for residual momentum
+                # Need at least 721 bars for 30-day (720h) lookback
+                if df.empty or len(df) < 721: continue
 
+                # --- Dual-Speed Momentum Phase Calculation ---
+                fast_lookback_hrs = 7 * 24  # 168 hours
+                slow_lookback_hrs = 30 * 24 # 720 hours
+                
+                fast_return = df['close'].iloc[-1] / df['close'].iloc[-1 - fast_lookback_hrs] - 1
+                slow_return = df['close'].iloc[-1] / df['close'].iloc[-1 - slow_lookback_hrs] - 1
+                
+                W_FAST = 1 if fast_return >= 0 else -1
+                W_SLOW = 1 if slow_return >= 0 else -1
+
+                if W_SLOW == 1 and W_FAST == 1: market_phase = "Bull"
+                elif W_SLOW == -1 and W_FAST == -1: market_phase = "Bear"
+                elif W_SLOW == 1 and W_FAST == -1: market_phase = "Correction"
+                else: market_phase = "Rebound" # W_SLOW == -1 and W_FAST == 1
+
+                # --- Wavelet & Other Calculations ---
                 data_train = df["close"].values; timestamps_train = df.index
                 coeffs = pywt.wavedec(data_train, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1])) / 0.6745
                 uthresh = sigma * np.sqrt(2 * np.log(len(data_train))); coeffs_thresh = [coeffs[0]] + [pywt.threshold(c, uthresh, mode='soft') for c in coeffs[1:]]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')
                 
-                min_len = min(len(data_denoised), len(timestamps_train)); data_denoised = data_denoised[:min_len]; df = df.iloc[:min_len].copy()
+                min_len = min(len(data_denoised), len(timestamps_train)); data_denoised = data_denoised[:min_len]; df_wavelet = df.iloc[:min_len].copy()
 
-                w = rogers_satchell_volatility(df); labels = auto_labeling(tuple(data_denoised), tuple(df.index), w)
-                df['label'] = labels
+                w = rogers_satchell_volatility(df_wavelet); labels = auto_labeling(tuple(data_denoised), tuple(df_wavelet.index), w)
+                df_wavelet['label'] = labels
 
-                df['log_return'] = np.log(df['close'] / df['close'].shift(1)); df['strategy_return'] = df['label'].shift(1) * df['log_return']
-                raw_bps = df['strategy_return'].sum() * 10000
+                df_wavelet['log_return'] = np.log(df_wavelet['close'] / df_wavelet['close'].shift(1)); df_wavelet['strategy_return'] = df_wavelet['label'].shift(1) * df_wavelet['log_return']
+                raw_bps = df_wavelet['strategy_return'].sum() * 10000
 
-                bull_dots = (df['label'] == 1).sum(); bear_dots = (df['label'] == -1).sum(); total_dots = bull_dots + bear_dots
+                bull_dots = (df_wavelet['label'] == 1).sum(); bear_dots = (df_wavelet['label'] == -1).sum(); total_dots = bull_dots + bear_dots
                 raw_bias = (bull_dots - bear_dots) / total_dots if total_dots > 0 else 0
                 
-                gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0); accuracy = accuracy_score(gt, df['label'])
+                gt = np.sign(df_wavelet['close'].shift(-1) - df_wavelet['close']).fillna(0); accuracy = accuracy_score(gt, df_wavelet['label'])
 
                 # --- Calculate Residual Momentum ---
                 aligned_asset_prices, aligned_market_prices = df[['close']].align(market_prices, join='inner', axis=0)
@@ -318,7 +335,8 @@ with tab3:
                     residual_mom_score = residual_mom_df.iloc[-1, 0] if not residual_mom_df.empty else np.nan
 
                 watchlist_results.append({
-                    'Token': symbol, 
+                    'Token': symbol,
+                    'Market Phase': market_phase,
                     'Net BPS': raw_bps, 
                     'Bull/Bear Bias': raw_bias,
                     'Accuracy': f"{accuracy:.2%}",
@@ -335,7 +353,10 @@ with tab3:
 
         df_watchlist = pd.DataFrame(watchlist_results)
         
-        # --- Sorting logic for Trend Purity ---
+        # Define column order for better readability
+        column_order = ['Token', 'Market Phase', 'Net BPS', 'Bull/Bear Bias', 'Accuracy', 'Residual Momentum']
+        df_watchlist = df_watchlist[column_order]
+
         df_watchlist = df_watchlist.sort_values(by=['Bull/Bear Bias', 'Net BPS'], ascending=[False, True]).reset_index(drop=True)
         
         # Format the columns AFTER sorting
@@ -369,15 +390,16 @@ with tab3:
 
             st.header("Performance Metrics")
 
-            col1, col2, col3, col4 = st.columns([1, 1, 1, 3])
+            col1, col2, col3, col4 = st.columns([1, 1, 1, 3.5])
             col1.metric("Accuracy", f"{accuracy:.2%}"); col2.metric("Precision", f"{precision:.2%}"); col3.metric("Recall", f"{recall:.2%}")
 
             with col4:
-                st.subheader("🏆 Trend Purity Watchlist")
+                st.subheader("🏆 Trend Purity & Momentum Watchlist")
                 st.markdown("Ranked by **Trend Purity**: highest Bull/Bear Bias, then lowest Net BPS.")
                 
                 watchlist_symbols = get_filtered_tickers(min_quote_volume=100000)
                 if watchlist_symbols:
+                    # Using 1h data with a 1000-bar lookback for the watchlist
                     df_watchlist = generate_watchlist(watchlist_symbols, '1h', 1000)
                     if not df_watchlist.empty:
                         st.dataframe(df_watchlist, use_container_width=True, hide_index=True)
