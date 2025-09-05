@@ -29,7 +29,8 @@ st.markdown("An interactive dashboard for backtesting strategies and analyzing a
 # ==============================================================================
 @st.cache_data
 def fetch_data(symbol, timeframe, limit):
-    st.info(f"Fetching {limit} bars of {symbol} {timeframe} data from Kraken...")
+    # This info message is now inside the function that calls it, to avoid clutter
+    # st.info(f"Fetching {limit} bars of {symbol} {timeframe} data from Kraken...")
     exchange = ccxt.kraken()
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
@@ -184,6 +185,40 @@ with tab3:
     threshold_type_wl = st.sidebar.radio("Threshold Type", ("Volatility-based", "Constant"), key="wl_thresh_type")
     constant_w_wl = st.sidebar.number_input("Constant Threshold (w)", value=0.01, step=0.001, format="%.4f", key="wl_const_w")
 
+    # --- NEW: Exclusion list of stablecoins and other tokens ---
+    STABLECOINS = {
+        'USDC', 'DAI', 'BUSD', 'TUSD', 'PAX', 'GUSD', 'USDK', 'UST', 'SUSD', 'FRAX', 'LUSD', 'MIM', 'USDQ',
+        'TBTC', 'WBTC', 'EUL', 'EUR', 'EURT', 'USDS', 'USTS', 'USTC', 'USDR', 'PYUSD', 'EURR', 'GBP', 'AUD', 'EURQ',
+        'T', 'USDG', 'WAXL', 'IDEX', 'FIS', 'CSM', 'MV', 'POWR', 'ATLAS', 'XCN', 'BOBA', 'OXY', 'BNC', 'POLIS', 'AIR',
+        'C98', 'BODEN', 'HDX', 'MSOL', 'REP', 'ANLOG', 'RLUSD', 'USDT','EUROP'
+    }
+
+    # --- NEW: Function to dynamically fetch and filter tickers ---
+    @st.cache_data(ttl=3600) # Cache for 1 hour
+    def get_filtered_tickers(min_quote_volume=100000):
+        st.info("Fetching all available markets from Kraken to find eligible tickers...")
+        try:
+            exchange = ccxt.kraken()
+            markets = exchange.load_markets()
+            
+            filtered_symbols = []
+            for symbol, market in markets.items():
+                if not market.get('active', False): continue
+                if market.get('quote') not in ['USD', 'USDT']: continue
+                if market.get('base') in STABLECOINS: continue
+                
+                quote_volume = market.get('quoteVolume')
+                if quote_volume is None or quote_volume < min_quote_volume: continue
+                
+                filtered_symbols.append(symbol)
+                
+            st.success(f"Found {len(filtered_symbols)} tickers meeting the criteria (USD/USDT quote, >{min_quote_volume:,} volume).")
+            return filtered_symbols
+            
+        except Exception as e:
+            st.error(f"Failed to fetch or filter markets from Kraken: {e}")
+            return []
+
     @st.cache_data
     def auto_labeling(data_tuple, timestamp_tuple, w):
         data_list = np.array(data_tuple); timestamps = pd.Series(timestamp_tuple)
@@ -208,74 +243,48 @@ with tab3:
         log_ho = np.log(data["high"] / data["open"]); log_lo = np.log(data["low"] / data["open"]); log_co = np.log(data["close"] / data["open"])
         return np.sqrt(np.mean(log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)))
 
-    # --- NEW AND IMPROVED WATCHLIST GENERATION LOGIC ---
     @st.cache_data
     def generate_watchlist(symbols, timeframe, limit):
-        st.info(f"Generating watchlist for {len(symbols)} tokens...")
+        st.info(f"Analyzing {len(symbols)} tokens for watchlist...")
         watchlist_results = []
-        progress_bar = st.progress(0, text="Analyzing tokens for watchlist...")
+        progress_bar = st.progress(0, text="Initializing watchlist analysis...")
         
         for i, symbol in enumerate(symbols):
             try:
                 df = fetch_data(symbol, timeframe, limit)
-                if df.empty or len(df) < 50:
-                    st.warning(f"Skipping {symbol} for watchlist due to insufficient data.")
-                    continue
+                if df.empty or len(df) < 50: continue
 
-                # Wavelet Denoising
-                data_train = df["close"].values
-                timestamps_train = df.index
-                coeffs = pywt.wavedec(data_train, 'db4', level=4)
-                sigma = np.median(np.abs(coeffs[-1])) / 0.6745
-                uthresh = sigma * np.sqrt(2 * np.log(len(data_train)))
-                coeffs_thresh = [coeffs[0]] + [pywt.threshold(c, uthresh, mode='soft') for c in coeffs[1:]]
+                data_train = df["close"].values; timestamps_train = df.index
+                coeffs = pywt.wavedec(data_train, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1])) / 0.6745
+                uthresh = sigma * np.sqrt(2 * np.log(len(data_train))); coeffs_thresh = [coeffs[0]] + [pywt.threshold(c, uthresh, mode='soft') for c in coeffs[1:]]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')
                 
-                min_len = min(len(data_denoised), len(timestamps_train))
-                data_denoised = data_denoised[:min_len]
-                df = df.iloc[:min_len].copy()
+                min_len = min(len(data_denoised), len(timestamps_train)); data_denoised = data_denoised[:min_len]; df = df.iloc[:min_len].copy()
 
-                # Labeling and Performance Calculation
-                w = rogers_satchell_volatility(df)
-                labels = auto_labeling(tuple(data_denoised), tuple(df.index), w)
+                w = rogers_satchell_volatility(df); labels = auto_labeling(tuple(data_denoised), tuple(df.index), w)
                 df['label'] = labels
 
-                # --- NEW METRICS CALCULATION ---
-                # 1. Net BPS (Basis Points)
-                df['log_return'] = np.log(df['close'] / df['close'].shift(1))
-                df['strategy_return'] = df['label'].shift(1) * df['log_return']
+                df['log_return'] = np.log(df['close'] / df['close'].shift(1)); df['strategy_return'] = df['label'].shift(1) * df['log_return']
                 total_bps = df['strategy_return'].sum() * 10000
 
-                # 2. Bull/Bear Bias
-                bull_dots = (df['label'] == 1).sum()
-                bear_dots = (df['label'] == -1).sum()
-                total_dots = bull_dots + bear_dots
+                bull_dots = (df['label'] == 1).sum(); bear_dots = (df['label'] == -1).sum(); total_dots = bull_dots + bear_dots
                 bull_bear_bias = (bull_dots - bear_dots) / total_dots if total_dots > 0 else 0
                 
-                # 3. Accuracy (kept from before)
-                gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0)
-                accuracy = accuracy_score(gt, df['label'])
+                gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0); accuracy = accuracy_score(gt, df['label'])
                 
-                watchlist_results.append({
-                    'Token': symbol,
-                    'Net BPS': total_bps, # Store as number for sorting
-                    'Bull/Bear Bias': f"{bull_bear_bias:.2%}",
-                    'Accuracy': f"{accuracy:.2%}"
-                })
+                watchlist_results.append({'Token': symbol, 'Net BPS': total_bps, 'Bull/Bear Bias': f"{bull_bear_bias:.2%}",'Accuracy': f"{accuracy:.2%}"})
 
             except Exception as e:
-                st.warning(f"Could not process {symbol} for watchlist. Error: {e}")
+                st.warning(f"Could not process {symbol}. Error: {e}")
             
             progress_bar.progress((i + 1) / len(symbols), text=f"Analyzing {symbol}...")
         
         progress_bar.empty()
-        if not watchlist_results:
-            return pd.DataFrame()
+        if not watchlist_results: return pd.DataFrame()
 
-        # Create DataFrame, sort by Net BPS, and format the column for display
         df_watchlist = pd.DataFrame(watchlist_results)
         df_watchlist = df_watchlist.sort_values(by='Net BPS', ascending=False).reset_index(drop=True)
-        df_watchlist['Net BPS'] = df_watchlist['Net BPS'].map('{:,.2f}'.format) # Format after sorting
+        df_watchlist['Net BPS'] = df_watchlist['Net BPS'].map('{:,.2f}'.format)
         
         return df_watchlist
 
@@ -303,19 +312,23 @@ with tab3:
 
             st.header("Performance Metrics")
 
-            col1, col2, col3, col4 = st.columns([1, 1, 1, 2.5]) # Adjusted column widths
+            col1, col2, col3, col4 = st.columns([1, 1, 1, 2.5])
             col1.metric("Accuracy", f"{accuracy:.2%}"); col2.metric("Precision", f"{precision:.2%}"); col3.metric("Recall", f"{recall:.2%}")
 
             with col4:
-                st.subheader("🏆 Wavelet Structure Watchlist")
-                st.markdown("Tokens ranked by **Net BPS**, indicating the strongest directional structure.")
-                watchlist_symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'DOGE/USDT', 'ADA/USDT', 'AVAX/USDT', 'DOT/USDT']
-                df_watchlist = generate_watchlist(watchlist_symbols, '1h', 1000)
-                if not df_watchlist.empty:
-                    st.dataframe(df_watchlist, use_container_width=True, hide_index=True)
+                st.subheader("🏆 Dynamic Wavelet Watchlist")
+                st.markdown("Auto-filtered tokens ranked by **Net BPS** (strongest directional structure).")
+                # --- THIS IS THE NEW DYNAMIC LOGIC ---
+                watchlist_symbols = get_filtered_tickers(min_quote_volume=100000)
+                if watchlist_symbols:
+                    df_watchlist = generate_watchlist(watchlist_symbols, '1h', 1000)
+                    if not df_watchlist.empty:
+                        st.dataframe(df_watchlist, use_container_width=True, hide_index=True)
+                    else:
+                        st.warning("Analysis complete, but no data to display for the watchlist.")
                 else:
-                    st.warning("Could not generate the watchlist.")
-
+                    st.error("No tickers met the filter criteria. Watchlist is empty.")
+            
             st.header("Charts")
             fig_wl = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Denoised Data & Labels', f'Original Price for {symbol_wl}'))
 
