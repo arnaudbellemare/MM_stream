@@ -187,8 +187,7 @@ with tab3:
         'T', 'USDG', 'WAXL', 'IDEX', 'FIS', 'CSM', 'MV', 'POWR', 'ATLAS', 'XCN', 'BOBA', 'OXY', 'BNC', 'POLIS', 'AIR',
         'C98', 'BODEN', 'HDX', 'MSOL', 'REP', 'ANLOG', 'RLUSD', 'USDT','EUROP'
     }
-    
-    # --- FINAL, CORRECTED TICKER FETCHING AND FILTERING LOGIC ---
+
     @st.cache_data(ttl=3600) # Cache for 1 hour
     def get_filtered_tickers(min_quote_volume=100000):
         st.info("Fetching all tickers from Kraken to filter by live 24h volume...")
@@ -199,22 +198,15 @@ with tab3:
             
             filtered_symbols = []
             for symbol, ticker in tickers.items():
-                # --- APPLY NEW, STRICT FILTERS ---
-                # 1. Symbol MUST end with /USD. No exceptions.
                 if not symbol.endswith('/USD'):
                     continue
                 
-                # Check for necessary data points
-                if 'quoteVolume' not in ticker or ticker['quoteVolume'] is None:
-                    continue
-                if symbol not in markets:
+                if 'quoteVolume' not in ticker or ticker['quoteVolume'] is None or symbol not in markets:
                     continue
 
-                # 2. Live 24h quote volume must be above the threshold.
                 if ticker['quoteVolume'] < min_quote_volume:
                     continue
 
-                # 3. Base currency must NOT be in the exclusion list.
                 base_currency = markets[symbol].get('base')
                 if base_currency in STABLECOINS:
                     continue
@@ -274,14 +266,19 @@ with tab3:
                 df['label'] = labels
 
                 df['log_return'] = np.log(df['close'] / df['close'].shift(1)); df['strategy_return'] = df['label'].shift(1) * df['log_return']
-                total_bps = df['strategy_return'].sum() * 10000
+                raw_bps = df['strategy_return'].sum() * 10000
 
                 bull_dots = (df['label'] == 1).sum(); bear_dots = (df['label'] == -1).sum(); total_dots = bull_dots + bear_dots
-                bull_bear_bias = (bull_dots - bear_dots) / total_dots if total_dots > 0 else 0
+                raw_bias = (bull_dots - bear_dots) / total_dots if total_dots > 0 else 0
                 
                 gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0); accuracy = accuracy_score(gt, df['label'])
                 
-                watchlist_results.append({'Token': symbol, 'Net BPS': total_bps, 'Bull/Bear Bias': f"{bull_bear_bias:.2%}",'Accuracy': f"{accuracy:.2%}"})
+                watchlist_results.append({
+                    'Token': symbol, 
+                    'Net BPS': raw_bps, 
+                    'Bull/Bear Bias': raw_bias,
+                    'Accuracy': f"{accuracy:.2%}"
+                })
 
             except Exception as e:
                 st.warning(f"Could not process {symbol}. Error: {e}")
@@ -292,8 +289,15 @@ with tab3:
         if not watchlist_results: return pd.DataFrame()
 
         df_watchlist = pd.DataFrame(watchlist_results)
-        df_watchlist = df_watchlist.sort_values(by='Net BPS', ascending=False).reset_index(drop=True)
+        
+        # --- NEW SORTING LOGIC FOR TREND PURITY ---
+        # 1. Sort by Bias Descending (most bullish first)
+        # 2. Then, sort by Net BPS Ascending (lowest BPS for that bias group first)
+        df_watchlist = df_watchlist.sort_values(by=['Bull/Bear Bias', 'Net BPS'], ascending=[False, True]).reset_index(drop=True)
+        
+        # Format the columns AFTER sorting is done
         df_watchlist['Net BPS'] = df_watchlist['Net BPS'].map('{:,.2f}'.format)
+        df_watchlist['Bull/Bear Bias'] = df_watchlist['Bull/Bear Bias'].map('{:,.2%}'.format)
         
         return df_watchlist
 
@@ -325,8 +329,9 @@ with tab3:
             col1.metric("Accuracy", f"{accuracy:.2%}"); col2.metric("Precision", f"{precision:.2%}"); col3.metric("Recall", f"{recall:.2%}")
 
             with col4:
-                st.subheader("🏆 Dynamic USD Watchlist")
-                st.markdown("Auto-filtered tokens ranked by **Net BPS** (strongest directional structure).")
+                st.subheader("🏆 Trend Purity Watchlist")
+                # --- NEW DESCRIPTION FOR THE NEW RANKING ---
+                st.markdown("Ranked by **Trend Purity**: highest Bull/Bear Bias, then lowest Net BPS.")
                 
                 watchlist_symbols = get_filtered_tickers(min_quote_volume=100000)
                 if watchlist_symbols:
