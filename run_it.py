@@ -437,7 +437,7 @@ with tab4:
                     showarrow=False,
                     font=dict(
                         family="Arial, sans-serif",
-                        size=90,
+                        size=50,
                         color="rgba(0, 0, 0, 0.15)" # Light black color
                     ),
                     align='center'
