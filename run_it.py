@@ -338,6 +338,9 @@ with tab3:
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
 # ==============================================================================
+# ==============================================================================
+# TAB 4: WAVELET SIGNAL VISUALIZER
+# ==============================================================================
 with tab4:
     st.header("🌊 Wavelet Signal Visualizer")
     st.markdown("This tool denoises price data using wavelets and applies an auto-labeling algorithm to identify potential trend phases. The resulting signals are plotted directly on the price chart.")
@@ -376,7 +379,7 @@ with tab4:
                 labels = auto_labeling(data_denoised, w_used)
                 df_wv['label'] = labels
 
-                # --- Plotting with the new, robust watermark placement ---
+                # Plotting
                 fig_wv = go.Figure()
                 fig_wv.add_trace(go.Scatter(x=df_wv.index, y=df_wv['close'], mode='lines', name='Close Price', line=dict(color='gray', width=2)))
                 
@@ -386,20 +389,24 @@ with tab4:
                 down_signals = df_wv[df_wv['label'] == -1]
                 fig_wv.add_trace(go.Scatter(x=down_signals.index, y=down_signals['close'], mode='markers', name='Down Signal', marker=dict(color='crimson', size=7, symbol='circle')))
 
-                # --- NEW: Robust watermark in top-left corner ---
-                # Using 'paper' coordinates makes the placement relative to the chart area,
-                # ensuring it's always in the corner regardless of the price/date range.
+                # --- NEW: Updated annotation with subtitle ---
+                # We use HTML-like tags for formatting within a single annotation.
+                # '<b>' makes the symbol bold. '<br>' creates a line break.
+                # '<sup>' makes the text smaller, like a superscript.
+                watermark_text = f"<b>{symbol_wv}</b><br><sup>Permutation Research</sup>"
+                
                 fig_wv.add_annotation(
-                    text=symbol_wv,
+                    text=watermark_text,
                     xref="paper", yref="paper",
-                    x=0.05, y=0.95,  # 5% from left, 95% from bottom (i.e., 5% from top)
+                    x=0.05, y=0.98,  # Positioned 5% from left, 2% from top
                     showarrow=False,
                     font=dict(
                         family="Arial, sans-serif",
-                        size=60,
-                        color="rgba(0, 0, 0, 0.2)" # Slightly darker for better visibility
+                        size=40,  # Font size for the main ticker
+                        color="rgba(0, 0, 0, 0.2)"
                     ),
-                    align="left"
+                    align="left",
+                    yanchor="top" # Anchors the text from the top
                 )
                 # --- END of new code ---
 
