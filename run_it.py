@@ -335,6 +335,9 @@ with tab3:
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
 # ==============================================================================
+# ==============================================================================
+# TAB 4: WAVELET SIGNAL VISUALIZER
+# ==============================================================================
 with tab4:
     st.header("🌊 Wavelet Signal Visualizer")
     st.markdown("This tool denoises price data using wavelets and applies an auto-labeling algorithm to identify potential trend phases. The resulting signals are plotted directly on the price chart.")
@@ -348,50 +351,6 @@ with tab4:
     is_constant_disabled = threshold_type_wv != "Constant"
     constant_w_wv = st.sidebar.number_input("Constant Threshold (w)", value=0.015, step=0.001, format="%.4f", key="wv_const_w", disabled=is_constant_disabled)
     
-    # --- NEW: Helper function for intelligent watermark placement ---
-    def find_best_watermark_location(df, n_segments=5):
-        """Analyzes the chart to find the largest empty area for the watermark."""
-        # Define overall chart boundaries with a 5% padding
-        chart_min_y = df['close'].min() * 0.95
-        chart_max_y = df['close'].max() * 1.05
-        
-        best_gap = -1
-        best_x = df.index[len(df) // 2] # Default to center
-        best_y = (chart_max_y + chart_min_y) / 2
-
-        # Split the dataframe index into segments
-        segment_indices = np.array_split(np.arange(len(df)), n_segments)
-
-        for segment in segment_indices:
-            if len(segment) == 0:
-                continue
-            
-            segment_df = df.iloc[segment]
-            segment_min_price = segment_df['close'].min()
-            segment_max_price = segment_df['close'].max()
-
-            # Calculate the empty space (gap) above and below the price line in this segment
-            gap_above = chart_max_y - segment_max_price
-            gap_below = segment_min_price - chart_min_y
-            
-            # Find the middle of the segment for the X coordinate
-            segment_x_center = segment_df.index[len(segment_df) // 2]
-
-            # If the gap above is the new best, update coordinates
-            if gap_above > best_gap:
-                best_gap = gap_above
-                best_x = segment_x_center
-                best_y = segment_max_price + (gap_above / 2)
-
-            # If the gap below is the new best, update coordinates
-            if gap_below > best_gap:
-                best_gap = gap_below
-                best_x = segment_x_center
-                best_y = segment_min_price - (gap_below / 2)
-                
-        return best_x, best_y
-    # --- END of new function ---
-
     if st.sidebar.button("Visualize Wavelet Signals", key="run_wv"):
         with st.spinner(f"Generating wavelet signals for {symbol_wv}..."):
             df_wv = fetch_data(symbol_wv, timeframe_wv, limit_wv)
@@ -399,15 +358,14 @@ with tab4:
             if df_wv.empty:
                 st.error(f"Could not fetch data for {symbol_wv}.")
             else:
-                # Denoising
+                # Denoising and Labeling logic remains the same...
                 close_prices = df_wv["close"].values
                 coeffs = pywt.wavedec(close_prices, 'db4', level=4)
-                sigma = np.median(np.abs(coeffs[-1]))/0.6745
+                sigma = np.median(np.abs(coeffs[-1])) / 0.6745
                 uthresh = sigma * np.sqrt(2 * np.log(len(close_prices)))
                 coeffs_thresh = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')[:len(close_prices)]
 
-                # Labeling
                 if threshold_type_wv == "Volatility-based":
                     w_used = rogers_satchell_volatility(df_wv)
                     st.info(f"Using volatility-based threshold (w): {w_used:.4f}")
@@ -418,7 +376,7 @@ with tab4:
                 labels = auto_labeling(data_denoised, w_used)
                 df_wv['label'] = labels
 
-                # Plotting
+                # --- Plotting with the new, robust watermark placement ---
                 fig_wv = go.Figure()
                 fig_wv.add_trace(go.Scatter(x=df_wv.index, y=df_wv['close'], mode='lines', name='Close Price', line=dict(color='gray', width=2)))
                 
@@ -428,21 +386,28 @@ with tab4:
                 down_signals = df_wv[df_wv['label'] == -1]
                 fig_wv.add_trace(go.Scatter(x=down_signals.index, y=down_signals['close'], mode='markers', name='Down Signal', marker=dict(color='crimson', size=7, symbol='circle')))
 
-                # --- NEW: Use the helper function to find the best spot ---
-                watermark_x, watermark_y = find_best_watermark_location(df_wv)
+                # --- NEW: Robust watermark in top-left corner ---
+                # Using 'paper' coordinates makes the placement relative to the chart area,
+                # ensuring it's always in the corner regardless of the price/date range.
                 fig_wv.add_annotation(
-                    x=watermark_x,
-                    y=watermark_y,
                     text=symbol_wv,
+                    xref="paper", yref="paper",
+                    x=0.05, y=0.95,  # 5% from left, 95% from bottom (i.e., 5% from top)
                     showarrow=False,
                     font=dict(
                         family="Arial, sans-serif",
-                        size=50,
-                        color="rgba(0, 0, 0, 0.15)" # Light black color
+                        size=60,
+                        color="rgba(0, 0, 0, 0.2)" # Slightly darker for better visibility
                     ),
-                    align='center'
+                    align="left"
                 )
-                # --- END of updated code ---
+                # --- END of new code ---
 
-                fig_wv.update_layout(title=f'Wavelet Signals on {symbol_wv} Close Price', xaxis_title='Date', yaxis_title='Price (USD)', legend_title='Legend', height=600)
+                fig_wv.update_layout(
+                    title=f'Wavelet Signals on {symbol_wv} Close Price',
+                    xaxis_title='Date',
+                    yaxis_title='Price (USD)',
+                    legend_title='Legend',
+                    height=600
+                )
                 st.plotly_chart(fig_wv, use_container_width=True)
