@@ -238,7 +238,7 @@ with tab3:
         st.info(f"Starting comprehensive analysis for {len(symbols)} tokens...")
         results = []
         progress_bar = st.progress(0, text="Initializing analysis...")
-        
+
         market_df = fetch_data('BTC/USD', timeframe, limit)
         if market_df.empty:
             st.error("Could not fetch market data (BTC/USD). Cannot proceed."); return pd.DataFrame()
@@ -247,7 +247,7 @@ with tab3:
             try:
                 df = fetch_data(symbol, timeframe, limit)
                 if df.empty or len(df) < 100: continue
-                
+
                 # --- 1. MLP Prediction ---
                 df_mlp = df.copy()
                 df_mlp['ret_fast'] = df_mlp['close'].pct_change(7)
@@ -255,22 +255,22 @@ with tab3:
                 df_mlp['volatility'] = df_mlp['close'].pct_change().rolling(20).std()
                 df_mlp['adx'] = get_adx(df_mlp['high'], df_mlp['low'], df_mlp['close'], 14)
                 df_mlp['volume_z'] = (df_mlp['volume']-df_mlp['volume'].rolling(30).mean())/df_mlp['volume'].rolling(30).std()
-                
+
                 features_df = df_mlp[['ret_fast', 'ret_slow', 'volatility', 'adx', 'volume_z']].dropna()
                 if len(features_df) < 50: continue
 
                 labels = get_triple_barrier_labels(df_mlp['close']).loc[features_df.index]
-                
+
                 pipeline = make_pipeline(StandardScaler(), MLPClassifier(hidden_layer_sizes=(32, 16), activation='relu', max_iter=500, random_state=42, early_stopping=True))
                 pipeline.fit(features_df, labels)
-                
+
                 latest_features = features_df.iloc[-1:]
                 pred_code = pipeline.predict(latest_features)[0]
                 pred_proba = pipeline.predict_proba(latest_features)[0].max()
                 signal_map = {1: "Buy", -1: "Sell", 0: "Hold"}
                 mlp_signal = signal_map.get(pred_code, "Hold")
                 confidence = pred_proba
-                
+
                 # --- 2. Statistical Analysis ---
                 fast_ret = df['close'].iloc[-1] / df['close'].iloc[-8] - 1 if len(df) > 8 else 0
                 slow_ret = df['close'].iloc[-1] / df['close'].iloc[-31] - 1 if len(df) > 31 else 0
@@ -285,7 +285,7 @@ with tab3:
                 uthresh = sigma * np.sqrt(2*np.log(len(close_prices)))
                 coeffs_thresh = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')[:len(close_prices)]
-                
+
                 w = rogers_satchell_volatility(df); wv_labels = auto_labeling(data_denoised, w)
                 df['wv_label'] = wv_labels
                 df['log_ret'] = np.log(df['close']/df['close'].shift(1))
@@ -294,7 +294,7 @@ with tab3:
                 bull_bear_bias = df['wv_label'].mean()
                 gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0)
                 accuracy = accuracy_score(gt, df['wv_label'])
-                
+
                 res_mom = generate_residual_momentum_factor(df['close'], market_df['close'])
                 res_mom_score = res_mom.iloc[-1] if not res_mom.empty and pd.notna(res_mom.iloc[-1]) else 0.0
 
@@ -304,32 +304,32 @@ with tab3:
                 })
             except Exception: continue
             finally: progress_bar.progress((i + 1) / len(symbols), text=f"Analyzed {symbol}...")
-        
+
         progress_bar.empty(); return pd.DataFrame(results)
 
     if st.sidebar.button("📈 Run Comprehensive Analysis", key="run_wl"):
         watchlist_symbols = get_filtered_tickers(min_volume_wl)
-        
+
         if not watchlist_symbols:
             st.error("No tickers met the filter criteria. Watchlist is empty.")
         else:
             df_watchlist = generate_comprehensive_watchlist(watchlist_symbols, '1d', data_limit_wl)
-            
+
             if df_watchlist.empty:
                 st.warning("Analysis complete, but no data could be generated for the watchlist.")
             else:
                 col1, col2 = st.columns([3, 1])
-                
+
                 with col1:
                     st.subheader("Comprehensive Market Watchlist")
                     df_display = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
-                    
+
                     df_display['Confidence'] = df_display['Confidence'].map('{:.1%}'.format)
                     df_display['Bull/Bear Bias'] = df_display['Bull/Bear Bias'].map('{:+.2%}'.format)
                     df_display['Net BPS'] = df_display['Net BPS'].map('{:,.0f}'.format)
                     df_display['Wavelet Accuracy'] = df_display['Wavelet Accuracy'].map('{:.1%}'.format)
                     df_display['Residual Momentum'] = df_display['Residual Momentum'].map('{:+.2f}'.format)
-                    
+
                     column_order = [
                         'Token', 'MLP Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias',
                         'Net BPS', 'Wavelet Accuracy', 'Residual Momentum'
@@ -339,24 +339,24 @@ with tab3:
                 with col2:
                     st.subheader("Market Sentiment")
                     st.markdown("<h5 style='text-align: center;'>Market Phase Distribution</h5>", unsafe_allow_html=True)
-                    
+
                     phase_counts = df_watchlist['Market Phase'].value_counts()
-                    
+
                     phase_colors = {
                         'Bull': 'mediumseagreen', 'Bear': 'crimson',
                         'Correction': 'orange', 'Rebound': 'deepskyblue'
                     }
 
                     fig_donut = px.pie(
-                        values=phase_counts.values, 
+                        values=phase_counts.values,
                         names=phase_counts.index,
-                        hole=0.5, # Increased hole size slightly for better text fit
+                        hole=0.4, # FIX: Decreased hole size
                         color=phase_counts.index,
                         color_discrete_map=phase_colors
                     )
                     fig_donut.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+percent+value')
-                    
-                    # --- NEW: Add annotation in the center ---
+
+                    # --- FIX: Add annotation in the center with black text ---
                     fig_donut.add_annotation(
                         text="PERMUTATION<br>RESEARCH",
                         x=0.5, y=0.5,
@@ -364,14 +364,15 @@ with tab3:
                         showarrow=False,
                         font=dict(
                             size=14,
-                            color="gray"
+                            color="black" # FIX: Changed color to black
                         ),
                         align="center"
                     )
-                    # --- END of new code ---
+                    # --- END of fix ---
 
                     fig_donut.update_layout(showlegend=False, margin=dict(t=0, b=20, l=20, r=20))
                     st.plotly_chart(fig_donut, use_container_width=True)
+
 
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
