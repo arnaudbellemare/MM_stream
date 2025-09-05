@@ -5,7 +5,7 @@ import numpy as np
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score
 from scipy.stats import norm
 from scipy.signal import savgol_filter
 import plotly.graph_objects as go
@@ -13,7 +13,7 @@ from plotly.subplots import make_subplots
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.collections import LineCollection
-import pywt # For Wavelet Denoising
+import pywt
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 st.set_page_config(layout="wide", page_title="Quantitative Research Dashboard")
 
 st.title("QUANTITATIVE TRADING RESEARCH DASHBOARD")
-st.markdown("An interactive dashboard for backtesting strategies and analyzing advanced market signals, now featuring **MLP-driven predictive signals** in the watchlist.")
+st.markdown("An interactive dashboard combining **AI-driven predictions** with **in-depth statistical analysis** for a comprehensive market view.")
 
 # ==============================================================================
 # Helper Functions (used across tabs)
@@ -42,16 +42,13 @@ def fetch_data(symbol, timeframe, limit):
     except Exception:
         return pd.DataFrame()
 
-def ema(data, window):
-    return pd.Series(data).ewm(span=window, adjust=False).mean().values
-
 # ==============================================================================
 # TAB STRUCTURE
 # ==============================================================================
-tab1, tab2, tab3 = st.tabs(["🏆 Hawkes Strategy Backtester", "🔬 SG Swing Analysis", "🧠 MLP Predictive Watchlist"])
+tab1, tab2, tab3 = st.tabs(["🏆 Hawkes Strategy Backtester", "🔬 SG Swing Analysis", "📈 Comprehensive Watchlist"])
 
 # ==============================================================================
-# TAB 1: HAWKES STRATEGY BACKTESTER
+# TAB 1: HAWKES STRATEGY BACKTESTER (Unchanged)
 # ==============================================================================
 with tab1:
     # ... (Code for Tab 1 remains unchanged) ...
@@ -138,7 +135,7 @@ with tab1:
 
 
 # ==============================================================================
-# TAB 2: SG SWING ANALYSIS
+# TAB 2: SG SWING ANALYSIS (Unchanged)
 # ==============================================================================
 with tab2:
     # ... (Code for Tab 2 remains unchanged) ...
@@ -171,164 +168,195 @@ with tab2:
             ax_sg.legend(); ax_sg.set_title(f"SG Swing Point Analysis for {symbol_sg}"); plt.colorbar(lc, ax=ax_sg, label="SG Filter Difference")
             st.pyplot(fig_sg)
 
-
 # ==============================================================================
-# TAB 3: MLP PREDICTIVE WATCHLIST
+# TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
 with tab3:
-    st.header("MLP Predictive Watchlist")
+    st.header("📈 Comprehensive Watchlist")
     st.markdown("""
-    This tool trains a unique Neural Network (MLP) for each cryptocurrency to generate predictive trading signals.
-    - **Asset-Specific Models:** Each token gets its own model, trained on its unique historical data.
-    - **Advanced Features:** Models consider momentum, volatility, trend strength (ADX), and volume to understand market context.
-    - **`MLP Signal`**: The model's prediction: `Buy` (predicts price will hit profit target first), `Sell` (predicts price will hit stop-loss first), or `Hold`.
-    - **`Confidence`**: The model's confidence in its prediction.
+    This powerful tool generates a unified watchlist by combining **AI-driven predictions** with **robust statistical analysis**.
+    - **MLP Signal & Confidence:** A unique neural network is trained for each asset to predict the next market move and its confidence.
+    - **Statistical Metrics:** Includes rule-based momentum phase, wavelet-based performance, and residual momentum.
     """)
-    st.sidebar.header("🧠 MLP Watchlist Configuration")
+    st.sidebar.header("📈 Watchlist Configuration")
     min_volume_wl = st.sidebar.number_input("Minimum 24h Quote Volume", value=250000, key="wl_min_vol")
+    data_limit_wl = st.sidebar.slider("Data Bars for Analysis", 500, 2000, 1500, key="wl_limit")
     
-    STABLECOINS = {'USDC', 'DAI', 'BUSD', 'TUSD', 'USDT', 'UST'} # Simplified list
+    # --- Helper Functions Specific to this Tab ---
+    STABLECOINS = {'USDC', 'DAI', 'BUSD', 'TUSD', 'USDT', 'UST'}
 
-    @st.cache_data(ttl=3600) # Cache for 1 hour
+    @st.cache_data(ttl=3600)
     def get_filtered_tickers(min_quote_volume):
         st.info(f"Fetching tickers with > ${min_quote_volume:,} 24h volume...")
         try:
             exchange = ccxt.kraken(); tickers = exchange.fetch_tickers(); markets = exchange.load_markets()
             filtered_symbols = [
-                symbol for symbol, ticker in tickers.items()
-                if symbol.endswith('/USD') and
-                ticker.get('quoteVolume') is not None and
-                ticker['quoteVolume'] > min_quote_volume and
-                markets.get(symbol, {}).get('base') not in STABLECOINS
+                s for s, t in tickers.items() if s.endswith('/USD') and t.get('quoteVolume', 0) > min_quote_volume and markets.get(s, {}).get('base') not in STABLECOINS
             ]
             st.success(f"Found {len(filtered_symbols)} active tickers.")
             return filtered_symbols
         except Exception as e:
-            st.error(f"Failed to fetch tickers: {e}")
-            return []
+            st.error(f"Failed to fetch tickers: {e}"); return []
 
     def get_adx(high, low, close, window):
-        plus_dm = high.diff(); minus_dm = low.diff(-1)
-        plus_dm[plus_dm < 0] = 0; minus_dm[minus_dm < 0] = 0
-        tr1 = pd.DataFrame(high - low); tr2 = pd.DataFrame(abs(high - close.shift(1))); tr3 = pd.DataFrame(abs(low - close.shift(1)))
-        tr = pd.concat([tr1, tr2, tr3], axis=1, join='inner').max(axis=1)
+        plus_dm = high.diff(); minus_dm = low.diff(-1); plus_dm[plus_dm < 0] = 0; minus_dm[minus_dm < 0] = 0
+        tr = pd.concat([high - low, abs(high - close.shift(1)), abs(low - close.shift(1))], axis=1).max(axis=1)
         atr = tr.ewm(alpha=1/window, adjust=False).mean()
         plus_di = 100 * (plus_dm.ewm(alpha=1/window, adjust=False).mean() / atr)
         minus_di = 100 * (abs(minus_dm.ewm(alpha=1/window, adjust=False).mean()) / atr)
         dx = 100 * (abs(plus_di - minus_di) / (plus_di + minus_di))
-        adx = dx.ewm(alpha=1/window, adjust=False).mean()
-        return adx
+        return dx.ewm(alpha=1/window, adjust=False).mean()
 
-    def get_triple_barrier_labels(close, lookahead_periods=5, tp_mult=1.5, sl_mult=1.5):
-        returns = close.pct_change()
-        volatility = returns.rolling(window=20).std().fillna(method='bfill')
-        
-        labels = pd.Series(0, index=close.index) # Default to Hold
-        
+    def get_triple_barrier_labels(close, lookahead_periods=5, vol_mult=1.5):
+        returns = close.pct_change(); volatility = returns.rolling(20).std().fillna(method='bfill')
+        labels = pd.Series(0, index=close.index)
         for i in range(len(close) - lookahead_periods):
-            entry_price = close.iloc[i]
-            take_profit = entry_price * (1 + tp_mult * volatility.iloc[i])
-            stop_loss = entry_price * (1 - sl_mult * volatility.iloc[i])
-            
-            future_prices = close.iloc[i+1 : i+1+lookahead_periods]
-            
-            # Check if take profit is hit first
-            if (future_prices >= take_profit).any():
-                labels.iloc[i] = 1 # Buy
-            # Check if stop loss is hit first
-            elif (future_prices <= stop_loss).any():
-                labels.iloc[i] = -1 # Sell
+            entry = close.iloc[i]; vol = volatility.iloc[i]
+            if vol == 0: continue
+            tp = entry * (1 + vol_mult * vol); sl = entry * (1 - vol_mult * vol)
+            future = close.iloc[i+1 : i+1+lookahead_periods]
+            if (future >= tp).any(): labels.iloc[i] = 1
+            elif (future <= sl).any(): labels.iloc[i] = -1
         return labels
 
-    @st.cache_data(ttl=3600 * 4) # Cache model predictions for 4 hours
-    def get_mlp_prediction_for_asset(symbol, timeframe='1d', limit=1500):
-        try:
-            df = fetch_data(symbol, timeframe, limit)
-            if df.empty or len(df) < 200: return "N/A", 0.0
+    def rogers_satchell_volatility(data):
+        log_ho = np.log(data["high"] / data["open"]); log_lo = np.log(data["low"] / data["open"]); log_co = np.log(data["close"] / data["open"])
+        return np.sqrt(np.mean(log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)))
 
-            # --- 1. Feature Engineering ---
-            df['ret_fast'] = df['close'].pct_change(7)
-            df['ret_slow'] = df['close'].pct_change(30)
-            df['volatility'] = df['close'].pct_change().rolling(20).std()
-            df['adx'] = get_adx(df['high'], df['low'], df['close'], 14)
-            df['volume_z'] = (df['volume'] - df['volume'].rolling(30).mean()) / df['volume'].rolling(30).std()
-            
-            # For beta, we need BTC data
-            btc_df = fetch_data('BTC/USD', timeframe, limit)
-            if not btc_df.empty:
-                market_ret = btc_df['close'].pct_change()
-                asset_ret = df['close'].pct_change()
-                rolling_cov = asset_ret.rolling(window=30).cov(market_ret)
-                rolling_var = market_ret.rolling(window=30).var()
-                df['beta'] = rolling_cov / rolling_var
-            else:
-                df['beta'] = 1.0 # Default if BTC data fails
+    def auto_labeling(data, w):
+        labels = np.zeros_like(data); FP=data[0]; x_H=data[0]; x_L=data[0]; Cid=0; FP_N=0
+        for i, price in enumerate(data):
+            if price > FP + FP*w: x_H=price; FP_N=i; Cid=1; break
+            if price < FP - FP*w: x_L=price; FP_N=i; Cid=-1; break
+        for i in range(FP_N, len(data)):
+            if Cid > 0 and data[i] < x_H - x_H*w: labels[FP_N:i+1]=1; x_L=data[i]; Cid=-1; FP_N=i
+            elif Cid < 0 and data[i] > x_L + x_L*w: labels[FP_N:i+1]=-1; x_H=data[i]; Cid=1; FP_N=i
+            if Cid > 0 and data[i] > x_H: x_H = data[i]
+            if Cid < 0 and data[i] < x_L: x_L = data[i]
+        labels[FP_N:] = Cid
+        return labels
 
-            feature_names = ['ret_fast', 'ret_slow', 'volatility', 'adx', 'volume_z', 'beta']
-            df.dropna(inplace=True)
-            X = df[feature_names]
-            
-            if len(X) < 100: return "Data Insufficient", 0.0
+    def generate_residual_momentum_factor(asset_prices, market_prices, window=30):
+        asset_returns = np.log(asset_prices / asset_prices.shift(1))
+        market_returns = np.log(market_prices / market_prices.shift(1))
+        rolling_cov = asset_returns.rolling(window=window).cov(market_returns)
+        rolling_var = market_returns.rolling(window=window).var()
+        beta = rolling_cov / rolling_var
+        residual = asset_returns - (beta * market_returns)
+        return (residual - residual.rolling(window).mean()) / residual.rolling(window).std()
 
-            # --- 2. Labeling ---
-            y = get_triple_barrier_labels(df['close'])
-            y = y.loc[X.index] # Align labels with features
+    @st.cache_data(ttl=3600 * 2) # Cache results for 2 hours
+    def generate_comprehensive_watchlist(symbols, timeframe, limit):
+        st.info(f"Starting comprehensive analysis for {len(symbols)} tokens...")
+        results = []
+        progress_bar = st.progress(0, text="Initializing analysis...")
+        
+        market_df = fetch_data('BTC/USD', timeframe, limit)
+        if market_df.empty:
+            st.error("Could not fetch market data (BTC/USD). Cannot proceed."); return pd.DataFrame()
 
-            # --- 3. Model Training ---
-            # Use last 80% of data for training, ensuring we don't use future data
-            train_size = int(len(X) * 0.8)
-            X_train, y_train = X.iloc[:train_size], y.iloc[:train_size]
-            
-            if len(X_train) < 50: return "Train Data Insufficient", 0.0
+        for i, symbol in enumerate(symbols):
+            try:
+                df = fetch_data(symbol, timeframe, limit)
+                if df.empty or len(df) < 100: continue
+                
+                # --- 1. MLP Prediction ---
+                df_mlp = df.copy()
+                df_mlp['ret_fast'] = df_mlp['close'].pct_change(7)
+                df_mlp['ret_slow'] = df_mlp['close'].pct_change(30)
+                df_mlp['volatility'] = df_mlp['close'].pct_change().rolling(20).std()
+                df_mlp['adx'] = get_adx(df_mlp['high'], df_mlp['low'], df_mlp['close'], 14)
+                df_mlp['volume_z'] = (df_mlp['volume']-df_mlp['volume'].rolling(30).mean())/df_mlp['volume'].rolling(30).std()
+                
+                features_df = df_mlp[['ret_fast', 'ret_slow', 'volatility', 'adx', 'volume_z']].dropna()
+                if len(features_df) < 50: continue
 
-            pipeline = make_pipeline(
-                StandardScaler(),
-                MLPClassifier(hidden_layer_sizes=(32, 16), activation='relu', max_iter=500, random_state=42, early_stopping=True)
-            )
-            pipeline.fit(X_train, y_train)
+                labels = get_triple_barrier_labels(df_mlp['close']).loc[features_df.index]
+                
+                pipeline = make_pipeline(StandardScaler(), MLPClassifier(hidden_layer_sizes=(32, 16), activation='relu', max_iter=500, random_state=42, early_stopping=True))
+                pipeline.fit(features_df, labels)
+                
+                latest_features = features_df.iloc[-1:]
+                pred_code = pipeline.predict(latest_features)[0]
+                pred_proba = pipeline.predict_proba(latest_features)[0].max()
+                signal_map = {1: "Buy", -1: "Sell", 0: "Hold"}
+                mlp_signal = signal_map.get(pred_code, "Hold")
+                confidence = pred_proba
+                
+                # --- 2. Statistical Analysis ---
+                # Market Phase
+                fast_ret = df['close'].iloc[-1] / df['close'].iloc[-8] - 1 if len(df) > 8 else 0
+                slow_ret = df['close'].iloc[-1] / df['close'].iloc[-31] - 1 if len(df) > 31 else 0
+                W_FAST = 1 if fast_ret >= 0 else -1; W_SLOW = 1 if slow_ret >= 0 else -1
+                if W_SLOW==1 and W_FAST==1: market_phase="Bull"
+                elif W_SLOW==-1 and W_FAST==-1: market_phase="Bear"
+                elif W_SLOW==1 and W_FAST==-1: market_phase="Correction"
+                else: market_phase="Rebound"
 
-            # --- 4. Prediction ---
-            latest_features = X.iloc[-1:]
-            prediction_code = pipeline.predict(latest_features)[0]
-            probabilities = pipeline.predict_proba(latest_features)[0]
-            
-            signal_map = {1: "Buy", -1: "Sell", 0: "Hold"}
-            signal = signal_map.get(prediction_code, "Hold")
-            confidence = probabilities.max()
-            
-            return signal, confidence
+                # Wavelet Analysis
+                close_prices = df["close"].values
+                coeffs = pywt.wavedec(close_prices, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1]))/0.6745
+                uthresh = sigma * np.sqrt(2*np.log(len(close_prices)))
+                coeffs_thresh = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
+                data_denoised = pywt.waverec(coeffs_thresh, 'db4')[:len(close_prices)]
+                
+                w = rogers_satchell_volatility(df); wv_labels = auto_labeling(data_denoised, w)
+                df['wv_label'] = wv_labels
+                df['log_ret'] = np.log(df['close']/df['close'].shift(1))
+                df['strat_ret'] = df['wv_label'].shift(1) * df['log_ret']
+                net_bps = df['strat_ret'].sum() * 10000
+                bull_bear_bias = df['wv_label'].mean()
+                gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0)
+                accuracy = accuracy_score(gt, df['wv_label'])
+                
+                # Residual Momentum
+                res_mom = generate_residual_momentum_factor(df['close'], market_df['close'])
+                res_mom_score = res_mom.iloc[-1] if not res_mom.empty and pd.notna(res_mom.iloc[-1]) else 0.0
 
-        except Exception as e:
-            # st.warning(f"Could not process {symbol}: {e}") # Too noisy for UI
-            return "Error", 0.0
+                results.append({
+                    'Token': symbol,
+                    'MLP Signal': mlp_signal,
+                    'Confidence': confidence,
+                    'Market Phase': market_phase,
+                    'Bull/Bear Bias': bull_bear_bias,
+                    'Net BPS': net_bps,
+                    'Wavelet Accuracy': accuracy,
+                    'Residual Momentum': res_mom_score,
+                })
+            except Exception as e:
+                # This will silently skip tokens that fail for any reason
+                continue
+            finally:
+                progress_bar.progress((i + 1) / len(symbols), text=f"Analyzed {symbol}...")
+        
+        progress_bar.empty()
+        return pd.DataFrame(results)
 
-    if st.sidebar.button("🧠 Run MLP Watchlist Analysis", key="run_wl"):
+
+    if st.sidebar.button("📈 Run Comprehensive Analysis", key="run_wl"):
         watchlist_symbols = get_filtered_tickers(min_volume_wl)
         
         if not watchlist_symbols:
             st.error("No tickers met the filter criteria. Watchlist is empty.")
         else:
-            results = []
-            progress_bar = st.progress(0, text="Initializing MLP model training...")
+            df_watchlist = generate_comprehensive_watchlist(watchlist_symbols, '1d', data_limit_wl)
             
-            for i, symbol in enumerate(watchlist_symbols):
-                signal, confidence = get_mlp_prediction_for_asset(symbol)
-                results.append({
-                    'Token': symbol,
-                    'MLP Signal': signal,
-                    'Confidence': confidence
-                })
-                progress_bar.progress((i + 1) / len(watchlist_symbols), text=f"Training & Predicting for {symbol}...")
-            
-            progress_bar.empty()
-            df_watchlist = pd.DataFrame(results)
-
-            # --- Display Results ---
-            st.subheader("🤖 AI-Driven Market Signals")
-            
-            # Sort by confidence for more actionable insights
-            df_watchlist = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
-            
-            df_watchlist['Confidence'] = df_watchlist['Confidence'].map('{:.1%}'.format)
-
-            st.dataframe(df_watchlist, use_container_width=True, hide_index=True)
+            if df_watchlist.empty:
+                st.warning("Analysis complete, but no data could be generated for the watchlist.")
+            else:
+                st.subheader(" 종합 시장 분석 ওয়াচলিস্ট") # "Comprehensive Market Analysis Watchlist"
+                
+                # --- Formatting & Sorting ---
+                df_watchlist = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
+                
+                df_watchlist['Confidence'] = df_watchlist['Confidence'].map('{:.1%}'.format)
+                df_watchlist['Bull/Bear Bias'] = df_watchlist['Bull/Bear Bias'].map('{:+.2%}'.format)
+                df_watchlist['Net BPS'] = df_watchlist['Net BPS'].map('{:,.0f}'.format)
+                df_watchlist['Wavelet Accuracy'] = df_watchlist['Wavelet Accuracy'].map('{:.1%}'.format)
+                df_watchlist['Residual Momentum'] = df_watchlist['Residual Momentum'].map('{:+.2f}'.format)
+                
+                column_order = [
+                    'Token', 'MLP Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias',
+                    'Net BPS', 'Wavelet Accuracy', 'Residual Momentum'
+                ]
+                st.dataframe(df_watchlist[column_order], use_container_width=True, hide_index=True)
