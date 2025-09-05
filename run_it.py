@@ -221,7 +221,6 @@ def generate_residual_momentum_factor(asset_prices, market_prices, window=30):
 # ==============================================================================
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
-# ==============================================================================
 with tab3:
     st.header("📈 Comprehensive Watchlist")
     st.markdown("""
@@ -247,31 +246,29 @@ with tab3:
             try:
                 df = fetch_data(symbol, timeframe, limit)
                 if df.empty or len(df) < 100: continue
-
-                # --- 1. MLP Prediction ---
+                
                 df_mlp = df.copy()
                 df_mlp['ret_fast'] = df_mlp['close'].pct_change(7)
                 df_mlp['ret_slow'] = df_mlp['close'].pct_change(30)
                 df_mlp['volatility'] = df_mlp['close'].pct_change().rolling(20).std()
                 df_mlp['adx'] = get_adx(df_mlp['high'], df_mlp['low'], df_mlp['close'], 14)
                 df_mlp['volume_z'] = (df_mlp['volume']-df_mlp['volume'].rolling(30).mean())/df_mlp['volume'].rolling(30).std()
-
+                
                 features_df = df_mlp[['ret_fast', 'ret_slow', 'volatility', 'adx', 'volume_z']].dropna()
                 if len(features_df) < 50: continue
 
                 labels = get_triple_barrier_labels(df_mlp['close']).loc[features_df.index]
-
+                
                 pipeline = make_pipeline(StandardScaler(), MLPClassifier(hidden_layer_sizes=(32, 16), activation='relu', max_iter=500, random_state=42, early_stopping=True))
                 pipeline.fit(features_df, labels)
-
+                
                 latest_features = features_df.iloc[-1:]
                 pred_code = pipeline.predict(latest_features)[0]
                 pred_proba = pipeline.predict_proba(latest_features)[0].max()
                 signal_map = {1: "Buy", -1: "Sell", 0: "Hold"}
                 mlp_signal = signal_map.get(pred_code, "Hold")
                 confidence = pred_proba
-
-                # --- 2. Statistical Analysis ---
+                
                 fast_ret = df['close'].iloc[-1] / df['close'].iloc[-8] - 1 if len(df) > 8 else 0
                 slow_ret = df['close'].iloc[-1] / df['close'].iloc[-31] - 1 if len(df) > 31 else 0
                 W_FAST = 1 if fast_ret >= 0 else -1; W_SLOW = 1 if slow_ret >= 0 else -1
@@ -285,7 +282,7 @@ with tab3:
                 uthresh = sigma * np.sqrt(2*np.log(len(close_prices)))
                 coeffs_thresh = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')[:len(close_prices)]
-
+                
                 w = rogers_satchell_volatility(df); wv_labels = auto_labeling(data_denoised, w)
                 df['wv_label'] = wv_labels
                 df['log_ret'] = np.log(df['close']/df['close'].shift(1))
@@ -294,7 +291,7 @@ with tab3:
                 bull_bear_bias = df['wv_label'].mean()
                 gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0)
                 accuracy = accuracy_score(gt, df['wv_label'])
-
+                
                 res_mom = generate_residual_momentum_factor(df['close'], market_df['close'])
                 res_mom_score = res_mom.iloc[-1] if not res_mom.empty and pd.notna(res_mom.iloc[-1]) else 0.0
 
@@ -304,75 +301,95 @@ with tab3:
                 })
             except Exception: continue
             finally: progress_bar.progress((i + 1) / len(symbols), text=f"Analyzed {symbol}...")
-
+        
         progress_bar.empty(); return pd.DataFrame(results)
 
     if st.sidebar.button("📈 Run Comprehensive Analysis", key="run_wl"):
         watchlist_symbols = get_filtered_tickers(min_volume_wl)
-
+        
         if not watchlist_symbols:
             st.error("No tickers met the filter criteria. Watchlist is empty.")
         else:
             df_watchlist = generate_comprehensive_watchlist(watchlist_symbols, '1d', data_limit_wl)
-
+            
             if df_watchlist.empty:
                 st.warning("Analysis complete, but no data could be generated for the watchlist.")
             else:
+                st.subheader("Comprehensive Market Watchlist")
                 col1, col2 = st.columns([3, 1])
-
+                
                 with col1:
-                    st.subheader("Comprehensive Market Watchlist")
                     df_display = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
-
-                    df_display['Confidence'] = df_display['Confidence'].map('{:.1%}'.format)
-                    df_display['Bull/Bear Bias'] = df_display['Bull/Bear Bias'].map('{:+.2%}'.format)
-                    df_display['Net BPS'] = df_display['Net BPS'].map('{:,.0f}'.format)
-                    df_display['Wavelet Accuracy'] = df_display['Wavelet Accuracy'].map('{:.1%}'.format)
-                    df_display['Residual Momentum'] = df_display['Residual Momentum'].map('{:+.2f}'.format)
-
-                    column_order = [
-                        'Token', 'MLP Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias',
-                        'Net BPS', 'Wavelet Accuracy', 'Residual Momentum'
-                    ]
-                    st.dataframe(df_display[column_order], use_container_width=True, hide_index=True)
+                    df_display_formatted = df_display.copy()
+                    df_display_formatted['Confidence'] = df_display_formatted['Confidence'].map('{:.1%}'.format)
+                    df_display_formatted['Bull/Bear Bias'] = df_display_formatted['Bull/Bear Bias'].map('{:+.2%}'.format)
+                    df_display_formatted['Net BPS'] = df_display_formatted['Net BPS'].map('{:,.0f}'.format)
+                    df_display_formatted['Wavelet Accuracy'] = df_display_formatted['Wavelet Accuracy'].map('{:.1%}'.format)
+                    df_display_formatted['Residual Momentum'] = df_display_formatted['Residual Momentum'].map('{:+.2f}'.format)
+                    column_order = ['Token', 'MLP Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias', 'Net BPS', 'Wavelet Accuracy', 'Residual Momentum']
+                    st.dataframe(df_display_formatted[column_order], use_container_width=True, hide_index=True)
 
                 with col2:
                     st.subheader("Market Sentiment")
                     st.markdown("<h5 style='text-align: center;'>Market Phase Distribution</h5>", unsafe_allow_html=True)
-
                     phase_counts = df_watchlist['Market Phase'].value_counts()
-
-                    phase_colors = {
-                        'Bull': 'mediumseagreen', 'Bear': 'crimson',
-                        'Correction': 'orange', 'Rebound': 'deepskyblue'
-                    }
-
-                    fig_donut = px.pie(
-                        values=phase_counts.values,
-                        names=phase_counts.index,
-                        hole=0.4, # FIX: Decreased hole size
-                        color=phase_counts.index,
-                        color_discrete_map=phase_colors
-                    )
-                    fig_donut.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+percent+value')
-
-                    # --- FIX: Add annotation in the center with black text ---
-                    fig_donut.add_annotation(
-                        text="PERMUTATION<br>RESEARCH",
-                        x=0.5, y=0.5,
-                        xref="paper", yref="paper",
-                        showarrow=False,
-                        font=dict(
-                            size=14,
-                            color="black" # FIX: Changed color to black
-                        ),
-                        align="center"
-                    )
-                    # --- END of fix ---
-
-                    fig_donut.update_layout(showlegend=False, margin=dict(t=0, b=20, l=20, r=20))
+                    phase_colors = {'Bull': 'mediumseagreen', 'Bear': 'crimson', 'Correction': '#f39c12', 'Rebound': 'deepskyblue'}
+                    fig_donut = px.pie(values=phase_counts.values, names=phase_counts.index, hole=0.6, color=phase_counts.index, color_discrete_map=phase_colors)
+                    fig_donut.update_traces(textinfo='label+percent', insidetextorientation='radial', hoverinfo='label+percent+value', textfont=dict(color='#34495e', size=15))
+                    styled_text = """<span style="font-family: 'Tourney', sans-serif; font-weight: 100; font-style: italic; font-size: 22px; text-shadow: -1px -1px 0 #2c3e50, 1px -1px 0 #2c3e50, -1px 1px 0 #2c3e50, 1px 1px 0 #2c3e50; color: transparent; background-color: white; background-image: repeating-linear-gradient(135deg, rgba(44, 62, 80, 0.75), rgba(44, 62, 80, 0.75) 1px, transparent 1px, transparent 3.5px); -webkit-background-clip: text; background-clip: text;">PERMUTATION<br>RESEARCH</span>"""
+                    fig_donut.add_annotation(text=styled_text, x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, align="center")
+                    fig_donut.update_layout(showlegend=False, margin=dict(t=20, b=20, l=20, r=20))
                     st.plotly_chart(fig_donut, use_container_width=True)
 
+                # --- NEW: QUADRANT CHART SECTION ---
+                st.subheader("Rebound & Correction Momentum Quadrant")
+                st.markdown("This chart plots assets in `Rebound` or `Correction` phases against their **Residual Momentum**. Residual Momentum measures a token's momentum relative to Bitcoin (the market).")
+
+                # 1. Filter for the relevant market phases
+                df_quadrant = df_watchlist[df_watchlist['Market Phase'].isin(['Correction', 'Rebound'])].copy()
+                
+                if df_quadrant.empty:
+                    st.info("No assets are currently in a 'Rebound' or 'Correction' phase to display in the quadrant.")
+                else:
+                    # 2. Create a numerical Y-axis for plotting
+                    df_quadrant['phase_numeric'] = df_quadrant['Market Phase'].apply(lambda phase: 1 if phase == 'Rebound' else -1)
+
+                    # 3. Build the scatter plot
+                    fig_quadrant = px.scatter(
+                        df_quadrant,
+                        x='Residual Momentum',
+                        y='phase_numeric',
+                        text='Token',
+                        color='Market Phase',
+                        color_discrete_map=phase_colors,
+                        hover_data={'Residual Momentum': ':.2f', 'phase_numeric': False} # Clean up hover data
+                    )
+
+                    # 4. Add quadrant dividing lines
+                    fig_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey")
+                    fig_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
+                    
+                    # 5. Add quadrant labels for clarity
+                    fig_quadrant.add_annotation(text="<b>Strong Rebound</b><br>(Outperforming Market)", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_quadrant.add_annotation(text="<b>Weak Rebound</b><br>(Underperforming Market)", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    fig_quadrant.add_annotation(text="<b>Strong Correction</b><br>(Outperforming Market)", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_quadrant.add_annotation(text="<b>Weak Correction</b><br>(Underperforming Market)", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
+
+                    # 6. Customize layout and axes
+                    fig_quadrant.update_traces(textposition='top center', textfont_size=10)
+                    fig_quadrant.update_yaxes(
+                        tickvals=[-1, 1], 
+                        ticktext=['<b>Correction Phase</b>', '<b>Rebound Phase</b>'], 
+                        title_text=""
+                    )
+                    fig_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
+                    fig_quadrant.update_layout(
+                        title_text="Rebound & Correction Momentum Quadrant",
+                        height=500,
+                        showlegend=False
+                    )
+
+                    st.plotly_chart(fig_quadrant, use_container_width=True)
 
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
