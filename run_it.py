@@ -319,7 +319,6 @@ with tab3:
                 col1, col2 = st.columns([3, 1])
                 
                 with col1:
-                    # Keep the original df_watchlist for the quadrant chart
                     df_display_formatted = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
                     df_display_formatted['Confidence'] = df_display_formatted['Confidence'].map('{:.1%}'.format)
                     df_display_formatted['Bull/Bear Bias'] = df_display_formatted['Bull/Bear Bias'].map('{:+.2%}'.format)
@@ -329,23 +328,33 @@ with tab3:
                     column_order = ['Token', 'MLP Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias', 'Net BPS', 'Wavelet Accuracy', 'Residual Momentum']
                     st.dataframe(df_display_formatted[column_order], use_container_width=True, hide_index=True)
 
-                # --- NEW: DONUT CHART CORRECTED TO MATCH CLEAN STYLE ---
+                # --- DEFINE THE CONSISTENT COLOR PALETTE HERE ---
+                phase_colors = {
+                    'Bull': '#60a971', 
+                    'Bear': '#d6454f', 
+                    'Correction': '#f8a541', 
+                    'Rebound': '#55b6e6'
+                }
+
                 with col2:
                     st.subheader("Market Sentiment")
                     st.markdown("<h5 style='text-align: center;'>Market Phase Distribution</h5>", unsafe_allow_html=True)
                     phase_counts = df_watchlist['Market Phase'].value_counts()
-                    # Updated colors to better match the new image
-                    phase_colors = {'Bull': '#60a971', 'Bear': '#d6454f', 'Correction': '#f8a541', 'Rebound': '#55b6e6'}
                     
-                    fig_donut = px.pie(values=phase_counts.values, names=phase_counts.index, hole=0.5, color=phase_counts.index, color_discrete_map=phase_colors)
+                    fig_donut = px.pie(
+                        values=phase_counts.values, 
+                        names=phase_counts.index, 
+                        hole=0.5, 
+                        color=phase_counts.index, 
+                        color_discrete_map=phase_colors # Use the defined color map
+                    )
                     
                     fig_donut.update_traces(
                         textinfo='label+percent',
-                        textfont=dict(color='#34495e', size=14), # Dark text, horizontal
+                        textfont=dict(color='#34495e', size=14),
                         hoverinfo='label+percent+value'
                     )
                     
-                    # Simple, clean annotation as per the new image
                     fig_donut.add_annotation(
                         text="<b>PERMUTATION</b><br>RESEARCH",
                         x=0.5, y=0.5, xref="paper", yref="paper",
@@ -357,30 +366,26 @@ with tab3:
                     fig_donut.update_layout(showlegend=False, margin=dict(t=20, b=20, l=20, r=20))
                     st.plotly_chart(fig_donut, use_container_width=True)
 
-                # --- NEW: QUADRANT CHART WITH BULL/BEAR BIAS VS RESIDUAL MOMENTUM ---
                 st.subheader("Market Landscape Quadrant")
                 st.markdown("This chart plots all assets based on their long-term trend (`Bull/Bear Bias`) versus their short-term momentum relative to the market (`Residual Momentum`).")
-
-                df_quadrant = df_watchlist.copy()
                 
-                if df_quadrant.empty:
+                if df_watchlist.empty:
                     st.info("No assets to display in the quadrant.")
                 else:
+                    # --- QUADRANT CHART UPDATED TO USE CONSISTENT COLORS ---
                     fig_quadrant = px.scatter(
-                        df_quadrant,
+                        df_watchlist,
                         x='Residual Momentum',
                         y='Bull/Bear Bias',
                         text='Token',
-                        color='Market Phase', # Color by phase for extra insight
-                        color_discrete_map=phase_colors,
+                        color='Market Phase',          # This tells Plotly which column to use for color
+                        color_discrete_map=phase_colors, # This applies our specific color palette
                         hover_data={'Residual Momentum': ':.2f', 'Bull/Bear Bias': ':.2%'}
                     )
 
-                    # Add quadrant dividing lines at zero
                     fig_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey")
                     fig_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
                     
-                    # Add new quadrant labels based on the new axes
                     fig_quadrant.add_annotation(text="<b>Leading Bulls</b><br>(Strong Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
                     fig_quadrant.add_annotation(text="<b>Lagging Bulls</b><br>(Strong Trend, Underperforming)", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
                     fig_quadrant.add_annotation(text="<b>Strongest Bears</b><br>(Bear Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
