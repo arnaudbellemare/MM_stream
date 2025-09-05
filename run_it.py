@@ -319,8 +319,8 @@ with tab3:
                 col1, col2 = st.columns([3, 1])
                 
                 with col1:
-                    df_display = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
-                    df_display_formatted = df_display.copy()
+                    # Keep the original df_watchlist for the quadrant chart
+                    df_display_formatted = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
                     df_display_formatted['Confidence'] = df_display_formatted['Confidence'].map('{:.1%}'.format)
                     df_display_formatted['Bull/Bear Bias'] = df_display_formatted['Bull/Bear Bias'].map('{:+.2%}'.format)
                     df_display_formatted['Net BPS'] = df_display_formatted['Net BPS'].map('{:,.0f}'.format)
@@ -329,68 +329,73 @@ with tab3:
                     column_order = ['Token', 'MLP Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias', 'Net BPS', 'Wavelet Accuracy', 'Residual Momentum']
                     st.dataframe(df_display_formatted[column_order], use_container_width=True, hide_index=True)
 
+                # --- NEW: DONUT CHART CORRECTED TO MATCH CLEAN STYLE ---
                 with col2:
                     st.subheader("Market Sentiment")
                     st.markdown("<h5 style='text-align: center;'>Market Phase Distribution</h5>", unsafe_allow_html=True)
                     phase_counts = df_watchlist['Market Phase'].value_counts()
-                    phase_colors = {'Bull': 'mediumseagreen', 'Bear': 'crimson', 'Correction': '#f39c12', 'Rebound': 'deepskyblue'}
-                    fig_donut = px.pie(values=phase_counts.values, names=phase_counts.index, hole=0.6, color=phase_counts.index, color_discrete_map=phase_colors)
-                    fig_donut.update_traces(textinfo='label+percent', insidetextorientation='radial', hoverinfo='label+percent+value', textfont=dict(color='#34495e', size=15))
-                    styled_text = """<span style="font-family: 'Tourney', sans-serif; font-weight: 100; font-style: italic; font-size: 22px; text-shadow: -1px -1px 0 #2c3e50, 1px -1px 0 #2c3e50, -1px 1px 0 #2c3e50, 1px 1px 0 #2c3e50; color: transparent; background-color: white; background-image: repeating-linear-gradient(135deg, rgba(44, 62, 80, 0.75), rgba(44, 62, 80, 0.75) 1px, transparent 1px, transparent 3.5px); -webkit-background-clip: text; background-clip: text;">PERMUTATION<br>RESEARCH</span>"""
-                    fig_donut.add_annotation(text=styled_text, x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, align="center")
+                    # Updated colors to better match the new image
+                    phase_colors = {'Bull': '#60a971', 'Bear': '#d6454f', 'Correction': '#f8a541', 'Rebound': '#55b6e6'}
+                    
+                    fig_donut = px.pie(values=phase_counts.values, names=phase_counts.index, hole=0.5, color=phase_counts.index, color_discrete_map=phase_colors)
+                    
+                    fig_donut.update_traces(
+                        textinfo='label+percent',
+                        textfont=dict(color='#34495e', size=14), # Dark text, horizontal
+                        hoverinfo='label+percent+value'
+                    )
+                    
+                    # Simple, clean annotation as per the new image
+                    fig_donut.add_annotation(
+                        text="<b>PERMUTATION</b><br>RESEARCH",
+                        x=0.5, y=0.5, xref="paper", yref="paper",
+                        showarrow=False,
+                        font=dict(size=16, color="#2c3e50"),
+                        align="center"
+                    )
+                    
                     fig_donut.update_layout(showlegend=False, margin=dict(t=20, b=20, l=20, r=20))
                     st.plotly_chart(fig_donut, use_container_width=True)
 
-                # --- NEW: QUADRANT CHART SECTION ---
-                st.subheader("Rebound & Correction Momentum Quadrant")
-                st.markdown("This chart plots assets in `Rebound` or `Correction` phases against their **Residual Momentum**. Residual Momentum measures a token's momentum relative to Bitcoin (the market).")
+                # --- NEW: QUADRANT CHART WITH BULL/BEAR BIAS VS RESIDUAL MOMENTUM ---
+                st.subheader("Market Landscape Quadrant")
+                st.markdown("This chart plots all assets based on their long-term trend (`Bull/Bear Bias`) versus their short-term momentum relative to the market (`Residual Momentum`).")
 
-                # 1. Filter for the relevant market phases
-                df_quadrant = df_watchlist[df_watchlist['Market Phase'].isin(['Correction', 'Rebound'])].copy()
+                df_quadrant = df_watchlist.copy()
                 
                 if df_quadrant.empty:
-                    st.info("No assets are currently in a 'Rebound' or 'Correction' phase to display in the quadrant.")
+                    st.info("No assets to display in the quadrant.")
                 else:
-                    # 2. Create a numerical Y-axis for plotting
-                    df_quadrant['phase_numeric'] = df_quadrant['Market Phase'].apply(lambda phase: 1 if phase == 'Rebound' else -1)
-
-                    # 3. Build the scatter plot
                     fig_quadrant = px.scatter(
                         df_quadrant,
                         x='Residual Momentum',
-                        y='phase_numeric',
+                        y='Bull/Bear Bias',
                         text='Token',
-                        color='Market Phase',
+                        color='Market Phase', # Color by phase for extra insight
                         color_discrete_map=phase_colors,
-                        hover_data={'Residual Momentum': ':.2f', 'phase_numeric': False} # Clean up hover data
+                        hover_data={'Residual Momentum': ':.2f', 'Bull/Bear Bias': ':.2%'}
                     )
 
-                    # 4. Add quadrant dividing lines
+                    # Add quadrant dividing lines at zero
                     fig_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey")
                     fig_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
                     
-                    # 5. Add quadrant labels for clarity
-                    fig_quadrant.add_annotation(text="<b>Strong Rebound</b><br>(Outperforming Market)", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
-                    fig_quadrant.add_annotation(text="<b>Weak Rebound</b><br>(Underperforming Market)", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
-                    fig_quadrant.add_annotation(text="<b>Strong Correction</b><br>(Outperforming Market)", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
-                    fig_quadrant.add_annotation(text="<b>Weak Correction</b><br>(Underperforming Market)", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    # Add new quadrant labels based on the new axes
+                    fig_quadrant.add_annotation(text="<b>Leading Bulls</b><br>(Strong Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_quadrant.add_annotation(text="<b>Lagging Bulls</b><br>(Strong Trend, Underperforming)", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    fig_quadrant.add_annotation(text="<b>Strongest Bears</b><br>(Bear Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_quadrant.add_annotation(text="<b>Weakest Bears</b><br>(Bear Trend, Underperforming)", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
 
-                    # 6. Customize layout and axes
                     fig_quadrant.update_traces(textposition='top center', textfont_size=10)
-                    fig_quadrant.update_yaxes(
-                        tickvals=[-1, 1], 
-                        ticktext=['<b>Correction Phase</b>', '<b>Rebound Phase</b>'], 
-                        title_text=""
-                    )
+                    fig_quadrant.update_yaxes(title_text="Bull/Bear Bias (Long-Term Trend)", zeroline=False, tickformat=".0%")
                     fig_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
                     fig_quadrant.update_layout(
-                        title_text="Rebound & Correction Momentum Quadrant",
+                        title_text="Bull/Bear Bias vs. Residual Momentum",
                         height=500,
-                        showlegend=False
+                        legend_title="Market Phase"
                     )
 
                     st.plotly_chart(fig_quadrant, use_container_width=True)
-
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
 # ==============================================================================
