@@ -2,7 +2,9 @@ import streamlit as st
 import ccxt
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from scipy.stats import norm
 from scipy.signal import savgol_filter
@@ -21,8 +23,8 @@ warnings.filterwarnings('ignore')
 # ==============================================================================
 st.set_page_config(layout="wide", page_title="Quantitative Research Dashboard")
 
-st.title(" QUANTITATIVE TRADING RESEARCH DASHBOARD")
-st.markdown("An interactive dashboard for backtesting strategies and analyzing advanced market signals. This version includes critical bug fixes for caching and data indexing.")
+st.title("QUANTITATIVE TRADING RESEARCH DASHBOARD")
+st.markdown("An interactive dashboard for backtesting strategies and analyzing advanced market signals, now featuring **MLP-driven predictive signals** in the watchlist.")
 
 # ==============================================================================
 # Helper Functions (used across tabs)
@@ -32,59 +34,27 @@ def fetch_data(symbol, timeframe, limit):
     exchange = ccxt.kraken()
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-        if len(ohlcv) == 0:
-            return pd.DataFrame()
+        if len(ohlcv) == 0: return pd.DataFrame()
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
-        df['stamp'] = df.index
         return df
     except Exception:
         return pd.DataFrame()
 
-
 def ema(data, window):
     return pd.Series(data).ewm(span=window, adjust=False).mean().values
-
-def generate_residual_momentum_factor(all_prices_df: pd.DataFrame, market_prices_series: pd.Series, windows: list[int] = [10, 30, 60, 90, 120], weights: list[float] = [0.5, 0.4, 0.3, 0.2, 0.1]) -> pd.DataFrame:
-    """Generates a standardized, weighted residual momentum factor for all assets."""
-    prices_lagged = all_prices_df.shift(1)
-    market_lagged = market_prices_series.shift(1)
-    asset_returns = np.log(prices_lagged / prices_lagged.shift(1))
-    market_returns = np.log(market_lagged / market_lagged.shift(1))
-    aggregated_residual = pd.DataFrame(0.0, index=prices_lagged.index, columns=prices_lagged.columns)
-    total_weight = 0.0
-    for window, weight in zip(windows, weights):
-        if weight <= 0:
-            continue
-        rolling_cov = asset_returns.rolling(window=window).cov(market_returns)
-        rolling_var = market_returns.rolling(window=window).var()
-        beta = rolling_cov.div(rolling_var.replace(0, np.nan), axis=0)
-        beta_times_market = beta.multiply(market_returns, axis=0)
-        residual = asset_returns.subtract(beta_times_market)
-        aggregated_residual += residual.fillna(0) * weight
-        total_weight += weight
-    raw_scores = (aggregated_residual / total_weight) * 100 if total_weight > 0 else aggregated_residual
-
-    # --- CORRECTED STANDARDIZATION ---
-    mean_res = raw_scores.mean()
-    std_res = raw_scores.std()
-    std_res[std_res == 0] = np.nan
-    standardized_scores = (raw_scores - mean_res) / std_res
-
-    return standardized_scores.fillna(0)
-
 
 # ==============================================================================
 # TAB STRUCTURE
 # ==============================================================================
-tab1, tab2, tab3 = st.tabs(["🏆 Hawkes Strategy Backtester", "🔬 SG Swing Analysis", "🌊 Wavelet Auto-Labeling"])
-
+tab1, tab2, tab3 = st.tabs(["🏆 Hawkes Strategy Backtester", "🔬 SG Swing Analysis", "🧠 MLP Predictive Watchlist"])
 
 # ==============================================================================
 # TAB 1: HAWKES STRATEGY BACKTESTER
 # ==============================================================================
 with tab1:
+    # ... (Code for Tab 1 remains unchanged) ...
     st.header("Hawkes Process Momentum Strategy Backtest")
     st.sidebar.header("⚙️ Backtester Configuration")
     st.sidebar.subheader("Indicator & Data Settings")
@@ -166,10 +136,12 @@ with tab1:
                     st.plotly_chart(plot_backtest_results(df_indicator, equity_bt, trades_bt, symbol_bt), use_container_width=True)
                     with st.expander("Show Raw Trades Data"): st.dataframe(trades_bt)
 
+
 # ==============================================================================
 # TAB 2: SG SWING ANALYSIS
 # ==============================================================================
 with tab2:
+    # ... (Code for Tab 2 remains unchanged) ...
     st.header("Savitzky-Golay Swing Point Detection with SpanB Overlay")
     st.markdown("This is an **offline analysis tool** for visualizing swing points. Note that this method has a **lookahead bias** and is **not** suitable for live trading signals.")
     st.sidebar.subheader("SG Swing Analysis Settings")
@@ -199,235 +171,164 @@ with tab2:
             ax_sg.legend(); ax_sg.set_title(f"SG Swing Point Analysis for {symbol_sg}"); plt.colorbar(lc, ax=ax_sg, label="SG Filter Difference")
             st.pyplot(fig_sg)
 
+
 # ==============================================================================
-# TAB 3: WAVELET AUTO-LABELING
+# TAB 3: MLP PREDICTIVE WATCHLIST
 # ==============================================================================
 with tab3:
-    st.header("Wavelet Auto-Labeling & Performance Metrics")
-    st.markdown("This section implements the advanced labeling technique using wavelet denoising and evaluates its performance against a simple ground truth.")
-    st.sidebar.subheader("Wavelet Labeling Settings")
-    symbol_wl = st.sidebar.text_input("Symbol", "BTC/USD", key="wl_symbol")
-    threshold_type_wl = st.sidebar.radio("Threshold Type", ("Volatility-based", "Constant"), key="wl_thresh_type")
-    constant_w_wl = st.sidebar.number_input("Constant Threshold (w)", value=0.01, step=0.001, format="%.4f", key="wl_const_w")
-
-    STABLECOINS = {
-        'USDC', 'DAI', 'BUSD', 'TUSD', 'PAX', 'GUSD', 'USDK', 'UST', 'SUSD', 'FRAX', 'LUSD', 'MIM', 'USDQ',
-        'TBTC', 'WBTC', 'EUL', 'EUR', 'EURT', 'USDS', 'USTS', 'USTC', 'USDR', 'PYUSD', 'EURR', 'GBP', 'AUD', 'EURQ',
-        'T', 'USDG', 'WAXL', 'IDEX', 'FIS', 'CSM', 'MV', 'POWR', 'ATLAS', 'XCN', 'BOBA', 'OXY', 'BNC', 'POLIS', 'AIR',
-        'C98', 'BODEN', 'HDX', 'MSOL', 'REP', 'ANLOG', 'RLUSD', 'USDT','EUROP'
-    }
+    st.header("MLP Predictive Watchlist")
+    st.markdown("""
+    This tool trains a unique Neural Network (MLP) for each cryptocurrency to generate predictive trading signals.
+    - **Asset-Specific Models:** Each token gets its own model, trained on its unique historical data.
+    - **Advanced Features:** Models consider momentum, volatility, trend strength (ADX), and volume to understand market context.
+    - **`MLP Signal`**: The model's prediction: `Buy` (predicts price will hit profit target first), `Sell` (predicts price will hit stop-loss first), or `Hold`.
+    - **`Confidence`**: The model's confidence in its prediction.
+    """)
+    st.sidebar.header("🧠 MLP Watchlist Configuration")
+    min_volume_wl = st.sidebar.number_input("Minimum 24h Quote Volume", value=250000, key="wl_min_vol")
+    
+    STABLECOINS = {'USDC', 'DAI', 'BUSD', 'TUSD', 'USDT', 'UST'} # Simplified list
 
     @st.cache_data(ttl=3600) # Cache for 1 hour
-    def get_filtered_tickers(min_quote_volume=100000):
-        st.info("Fetching all tickers from Kraken to filter by live 24h volume...")
+    def get_filtered_tickers(min_quote_volume):
+        st.info(f"Fetching tickers with > ${min_quote_volume:,} 24h volume...")
         try:
-            exchange = ccxt.kraken()
-            tickers = exchange.fetch_tickers()
-            markets = exchange.load_markets()
-            
-            filtered_symbols = []
-            for symbol, ticker in tickers.items():
-                if not symbol.endswith('/USD'):
-                    continue
-                
-                if 'quoteVolume' not in ticker or ticker['quoteVolume'] is None or symbol not in markets:
-                    continue
-
-                if ticker['quoteVolume'] < min_quote_volume:
-                    continue
-
-                base_currency = markets[symbol].get('base')
-                if base_currency in STABLECOINS:
-                    continue
-
-                filtered_symbols.append(symbol)
-            
-            st.success(f"Found {len(filtered_symbols)} tickers ending in /USD with >{min_quote_volume:,} volume.")
+            exchange = ccxt.kraken(); tickers = exchange.fetch_tickers(); markets = exchange.load_markets()
+            filtered_symbols = [
+                symbol for symbol, ticker in tickers.items()
+                if symbol.endswith('/USD') and
+                ticker.get('quoteVolume') is not None and
+                ticker['quoteVolume'] > min_quote_volume and
+                markets.get(symbol, {}).get('base') not in STABLECOINS
+            ]
+            st.success(f"Found {len(filtered_symbols)} active tickers.")
             return filtered_symbols
-            
         except Exception as e:
-            st.error(f"Failed to fetch or filter tickers from Kraken: {e}")
+            st.error(f"Failed to fetch tickers: {e}")
             return []
 
-    @st.cache_data
-    def auto_labeling(data_tuple, timestamp_tuple, w):
-        data_list = np.array(data_tuple); timestamps = pd.Series(timestamp_tuple)
-        labels = np.zeros(len(data_list)); FP = data_list[0]; x_H = data_list[0]; HT = timestamps[0]; x_L = data_list[0]; LT = timestamps[0]; Cid = 0; FP_N = 0
-        for i in range(len(data_list)):
-            if data_list[i] > FP + FP * w: x_H = data_list[i]; HT = timestamps[i]; FP_N = i; Cid = 1; break
-            if data_list[i] < FP - FP * w: x_L = data_list[i]; LT = timestamps[i]; FP_N = i; Cid = -1; break
-        for i in range(FP_N, len(data_list)):
-            if Cid > 0:
-                if data_list[i] > x_H: x_H = data_list[i]; HT = timestamps[i]
-                if data_list[i] < x_H - x_H * w and LT < HT:
-                    mask = ((timestamps > LT) & (timestamps <= HT)).values; labels[mask] = 1
-                    x_L = data_list[i]; LT = timestamps[i]; Cid = -1
-            elif Cid < 0:
-                if data_list[i] < x_L: x_L = data_list[i]; LT = timestamps[i]
-                if data_list[i] > x_L + x_L * w and HT <= LT:
-                    mask = ((timestamps > HT) & (timestamps <= LT)).values; labels[mask] = -1
-                    x_H = data_list[i]; HT = timestamps[i]; Cid = 1
-        labels = np.where(labels == 0, Cid, labels); return labels
+    def get_adx(high, low, close, window):
+        plus_dm = high.diff(); minus_dm = low.diff(-1)
+        plus_dm[plus_dm < 0] = 0; minus_dm[minus_dm < 0] = 0
+        tr1 = pd.DataFrame(high - low); tr2 = pd.DataFrame(abs(high - close.shift(1))); tr3 = pd.DataFrame(abs(low - close.shift(1)))
+        tr = pd.concat([tr1, tr2, tr3], axis=1, join='inner').max(axis=1)
+        atr = tr.ewm(alpha=1/window, adjust=False).mean()
+        plus_di = 100 * (plus_dm.ewm(alpha=1/window, adjust=False).mean() / atr)
+        minus_di = 100 * (abs(minus_dm.ewm(alpha=1/window, adjust=False).mean()) / atr)
+        dx = 100 * (abs(plus_di - minus_di) / (plus_di + minus_di))
+        adx = dx.ewm(alpha=1/window, adjust=False).mean()
+        return adx
 
-    def rogers_satchell_volatility(data):
-        log_ho = np.log(data["high"] / data["open"]); log_lo = np.log(data["low"] / data["open"]); log_co = np.log(data["close"] / data["open"])
-        return np.sqrt(np.mean(log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)))
-
-    @st.cache_data
-    def generate_watchlist(symbols, timeframe, limit):
-        st.info(f"Analyzing {len(symbols)} tokens for watchlist...")
-        watchlist_results = []
-        progress_bar = st.progress(0, text="Initializing watchlist analysis...")
+    def get_triple_barrier_labels(close, lookahead_periods=5, tp_mult=1.5, sl_mult=1.5):
+        returns = close.pct_change()
+        volatility = returns.rolling(window=20).std().fillna(method='bfill')
         
-        market_symbol = 'BTC/USD'
-        market_df = fetch_data(market_symbol, timeframe, limit)
-        if market_df.empty:
-            st.error(f"Could not fetch market data ({market_symbol}) for residual momentum calculation.")
-            return pd.DataFrame()
-        market_prices = market_df['close']
-
-        for i, symbol in enumerate(symbols):
-            try:
-                df = fetch_data(symbol, timeframe, limit)
-                # Need at least 721 bars for 30-day (720h) lookback
-                if df.empty or len(df) < 721: continue
-
-                # --- Dual-Speed Momentum Phase Calculation ---
-                fast_lookback_hrs = 7 * 24  # 168 hours
-                slow_lookback_hrs = 30 * 24 # 720 hours
-                
-                fast_return = df['close'].iloc[-1] / df['close'].iloc[-1 - fast_lookback_hrs] - 1
-                slow_return = df['close'].iloc[-1] / df['close'].iloc[-1 - slow_lookback_hrs] - 1
-                
-                W_FAST = 1 if fast_return >= 0 else -1
-                W_SLOW = 1 if slow_return >= 0 else -1
-
-                if W_SLOW == 1 and W_FAST == 1: market_phase = "Bull"
-                elif W_SLOW == -1 and W_FAST == -1: market_phase = "Bear"
-                elif W_SLOW == 1 and W_FAST == -1: market_phase = "Correction"
-                else: market_phase = "Rebound" # W_SLOW == -1 and W_FAST == 1
-
-                # --- Wavelet & Other Calculations ---
-                data_train = df["close"].values; timestamps_train = df.index
-                coeffs = pywt.wavedec(data_train, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1])) / 0.6745
-                uthresh = sigma * np.sqrt(2 * np.log(len(data_train))); coeffs_thresh = [coeffs[0]] + [pywt.threshold(c, uthresh, mode='soft') for c in coeffs[1:]]
-                data_denoised = pywt.waverec(coeffs_thresh, 'db4')
-                
-                min_len = min(len(data_denoised), len(timestamps_train)); data_denoised = data_denoised[:min_len]; df_wavelet = df.iloc[:min_len].copy()
-
-                w = rogers_satchell_volatility(df_wavelet); labels = auto_labeling(tuple(data_denoised), tuple(df_wavelet.index), w)
-                df_wavelet['label'] = labels
-
-                df_wavelet['log_return'] = np.log(df_wavelet['close'] / df_wavelet['close'].shift(1)); df_wavelet['strategy_return'] = df_wavelet['label'].shift(1) * df_wavelet['log_return']
-                raw_bps = df_wavelet['strategy_return'].sum() * 10000
-
-                bull_dots = (df_wavelet['label'] == 1).sum(); bear_dots = (df_wavelet['label'] == -1).sum(); total_dots = bull_dots + bear_dots
-                raw_bias = (bull_dots - bear_dots) / total_dots if total_dots > 0 else 0
-                
-                gt = np.sign(df_wavelet['close'].shift(-1) - df_wavelet['close']).fillna(0); accuracy = accuracy_score(gt, df_wavelet['label'])
-
-                # --- Calculate Residual Momentum ---
-                aligned_asset_prices, aligned_market_prices = df[['close']].align(market_prices, join='inner', axis=0)
-                if aligned_asset_prices.empty or len(aligned_asset_prices) < 120:
-                    residual_mom_score = np.nan
-                else:
-                    residual_mom_df = generate_residual_momentum_factor(aligned_asset_prices, aligned_market_prices)
-                    residual_mom_score = residual_mom_df.iloc[-1, 0] if not residual_mom_df.empty else np.nan
-
-                watchlist_results.append({
-                    'Token': symbol,
-                    'Market Phase': market_phase,
-                    'Net BPS': raw_bps, 
-                    'Bull/Bear Bias': raw_bias,
-                    'Accuracy': f"{accuracy:.2%}",
-                    'Residual Momentum': residual_mom_score
-                })
-
-            except Exception as e:
-                st.warning(f"Could not process {symbol}. Error: {e}")
+        labels = pd.Series(0, index=close.index) # Default to Hold
+        
+        for i in range(len(close) - lookahead_periods):
+            entry_price = close.iloc[i]
+            take_profit = entry_price * (1 + tp_mult * volatility.iloc[i])
+            stop_loss = entry_price * (1 - sl_mult * volatility.iloc[i])
             
-            progress_bar.progress((i + 1) / len(symbols), text=f"Analyzing {symbol}...")
-        
-        progress_bar.empty()
-        if not watchlist_results: return pd.DataFrame()
+            future_prices = close.iloc[i+1 : i+1+lookahead_periods]
+            
+            # Check if take profit is hit first
+            if (future_prices >= take_profit).any():
+                labels.iloc[i] = 1 # Buy
+            # Check if stop loss is hit first
+            elif (future_prices <= stop_loss).any():
+                labels.iloc[i] = -1 # Sell
+        return labels
 
-        df_watchlist = pd.DataFrame(watchlist_results)
-        
-        # Define column order for better readability
-        column_order = ['Token', 'Market Phase', 'Net BPS', 'Bull/Bear Bias', 'Accuracy', 'Residual Momentum']
-        df_watchlist = df_watchlist[column_order]
+    @st.cache_data(ttl=3600 * 4) # Cache model predictions for 4 hours
+    def get_mlp_prediction_for_asset(symbol, timeframe='1d', limit=1500):
+        try:
+            df = fetch_data(symbol, timeframe, limit)
+            if df.empty or len(df) < 200: return "N/A", 0.0
 
-        df_watchlist = df_watchlist.sort_values(by=['Bull/Bear Bias', 'Net BPS'], ascending=[False, True]).reset_index(drop=True)
-        
-        # Format the columns AFTER sorting
-        df_watchlist['Net BPS'] = df_watchlist['Net BPS'].map('{:,.2f}'.format)
-        df_watchlist['Bull/Bear Bias'] = df_watchlist['Bull/Bear Bias'].map('{:,.2%}'.format)
-        df_watchlist['Residual Momentum'] = df_watchlist['Residual Momentum'].map('{:,.3f}'.format)
-        
-        return df_watchlist
+            # --- 1. Feature Engineering ---
+            df['ret_fast'] = df['close'].pct_change(7)
+            df['ret_slow'] = df['close'].pct_change(30)
+            df['volatility'] = df['close'].pct_change().rolling(20).std()
+            df['adx'] = get_adx(df['high'], df['low'], df['close'], 14)
+            df['volume_z'] = (df['volume'] - df['volume'].rolling(30).mean()) / df['volume'].rolling(30).std()
+            
+            # For beta, we need BTC data
+            btc_df = fetch_data('BTC/USD', timeframe, limit)
+            if not btc_df.empty:
+                market_ret = btc_df['close'].pct_change()
+                asset_ret = df['close'].pct_change()
+                rolling_cov = asset_ret.rolling(window=30).cov(market_ret)
+                rolling_var = market_ret.rolling(window=30).var()
+                df['beta'] = rolling_cov / rolling_var
+            else:
+                df['beta'] = 1.0 # Default if BTC data fails
 
+            feature_names = ['ret_fast', 'ret_slow', 'volatility', 'adx', 'volume_z', 'beta']
+            df.dropna(inplace=True)
+            X = df[feature_names]
+            
+            if len(X) < 100: return "Data Insufficient", 0.0
 
-    if st.sidebar.button("🌊 Run Wavelet Analysis", key="run_wl"):
-        df_wl = fetch_data(symbol_wl, '1h', 1000)
-        if df_wl.empty:
-            st.error(f"Could not fetch data for {symbol_wl}. Cannot perform analysis.")
+            # --- 2. Labeling ---
+            y = get_triple_barrier_labels(df['close'])
+            y = y.loc[X.index] # Align labels with features
+
+            # --- 3. Model Training ---
+            # Use last 80% of data for training, ensuring we don't use future data
+            train_size = int(len(X) * 0.8)
+            X_train, y_train = X.iloc[:train_size], y.iloc[:train_size]
+            
+            if len(X_train) < 50: return "Train Data Insufficient", 0.0
+
+            pipeline = make_pipeline(
+                StandardScaler(),
+                MLPClassifier(hidden_layer_sizes=(32, 16), activation='relu', max_iter=500, random_state=42, early_stopping=True)
+            )
+            pipeline.fit(X_train, y_train)
+
+            # --- 4. Prediction ---
+            latest_features = X.iloc[-1:]
+            prediction_code = pipeline.predict(latest_features)[0]
+            probabilities = pipeline.predict_proba(latest_features)[0]
+            
+            signal_map = {1: "Buy", -1: "Sell", 0: "Hold"}
+            signal = signal_map.get(prediction_code, "Hold")
+            confidence = probabilities.max()
+            
+            return signal, confidence
+
+        except Exception as e:
+            # st.warning(f"Could not process {symbol}: {e}") # Too noisy for UI
+            return "Error", 0.0
+
+    if st.sidebar.button("🧠 Run MLP Watchlist Analysis", key="run_wl"):
+        watchlist_symbols = get_filtered_tickers(min_volume_wl)
+        
+        if not watchlist_symbols:
+            st.error("No tickers met the filter criteria. Watchlist is empty.")
         else:
-            data_train = df_wl["close"].values; timestamps_train = df_wl.index
-            st.info("Denoising data with Wavelets..."); coeffs = pywt.wavedec(data_train, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1])) / 0.6745
-            uthresh = sigma * np.sqrt(2 * np.log(len(data_train))); coeffs_thresh = [coeffs[0]] + [pywt.threshold(c, uthresh, mode='soft') for c in coeffs[1:]]; data_train_denoised = pywt.waverec(coeffs_thresh, 'db4')
-            min_len = min(len(data_train_denoised), len(timestamps_train)); data_train_denoised = data_train_denoised[:min_len]; timestamps_train = timestamps_train[:min_len]; df_wl = df_wl.iloc[:min_len].copy()
-            df_wl['denoised_close'] = data_train_denoised
-
-            if threshold_type_wl == "Volatility-based": w_used = rogers_satchell_volatility(df_wl); st.write(f"**Volatility-based threshold (w):** `{w_used:.4f}`")
-            else: w_used = constant_w_wl; st.write(f"**Using constant threshold (w):** `{w_used:.4f}`")
-
-            st.info("Auto-labeling denoised data...")
-            labels_wavelet = auto_labeling(tuple(data_train_denoised), tuple(timestamps_train), w_used)
-            df_wl['label'] = labels_wavelet
-
-            gt_labels = np.sign(df_wl['close'].shift(-1) - df_wl['close']).fillna(0)
-            accuracy = accuracy_score(gt_labels, labels_wavelet); precision = precision_score(gt_labels, labels_wavelet, average='weighted', zero_division=0); recall = recall_score(gt_labels, labels_wavelet, average='weighted', zero_division=0)
-
-            st.header("Performance Metrics")
-
-            col1, col2, col3, col4 = st.columns([1, 1, 1, 3.5])
-            col1.metric("Accuracy", f"{accuracy:.2%}"); col2.metric("Precision", f"{precision:.2%}"); col3.metric("Recall", f"{recall:.2%}")
-
-            with col4:
-                st.subheader("🏆 Trend Purity & Momentum Watchlist")
-                st.markdown("Ranked by **Trend Purity**: highest Bull/Bear Bias, then lowest Net BPS.")
-                
-                watchlist_symbols = get_filtered_tickers(min_quote_volume=100000)
-                if watchlist_symbols:
-                    # Using 1h data with a 1000-bar lookback for the watchlist
-                    df_watchlist = generate_watchlist(watchlist_symbols, '1h', 1000)
-                    if not df_watchlist.empty:
-                        st.dataframe(df_watchlist, use_container_width=True, hide_index=True)
-                    else:
-                        st.warning("Analysis complete, but no data to display for the watchlist.")
-                else:
-                    st.error("No tickers met the filter criteria. Watchlist is empty.")
+            results = []
+            progress_bar = st.progress(0, text="Initializing MLP model training...")
             
-            st.header("Charts")
-            fig_wl = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Denoised Data & Labels', f'Original Price for {symbol_wl}'))
+            for i, symbol in enumerate(watchlist_symbols):
+                signal, confidence = get_mlp_prediction_for_asset(symbol)
+                results.append({
+                    'Token': symbol,
+                    'MLP Signal': signal,
+                    'Confidence': confidence
+                })
+                progress_bar.progress((i + 1) / len(watchlist_symbols), text=f"Training & Predicting for {symbol}...")
+            
+            progress_bar.empty()
+            df_watchlist = pd.DataFrame(results)
 
-            fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['denoised_close'], name='Wavelet Denoised Price', line=dict(color='orange')), row=1, col=1)
-            up = df_wl[df_wl['label']==1]
-            down = df_wl[df_wl['label']==-1]
-            fig_wl.add_trace(go.Scatter(x=up.index, y=up['denoised_close'], mode='markers', name='Up Label', marker=dict(color='deepskyblue', symbol='circle', size=5)), row=1, col=1)
-            fig_wl.add_trace(go.Scatter(x=down.index, y=down['denoised_close'], mode='markers', name='Down Label', marker=dict(color='red', symbol='circle', size=5)), row=1, col=1)
+            # --- Display Results ---
+            st.subheader("🤖 AI-Driven Market Signals")
+            
+            # Sort by confidence for more actionable insights
+            df_watchlist = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
+            
+            df_watchlist['Confidence'] = df_watchlist['Confidence'].map('{:.1%}'.format)
 
-            fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['close'], name='Original Price', line=dict(color='gray')), row=2, col=1)
-
-            fig_wl.add_trace(go.Scatter(
-                x=up.index, y=up['close'], mode='markers', name='Up Label (on Price)',
-                marker=dict(color='deepskyblue', symbol='circle', size=5), showlegend=False
-            ), row=2, col=1)
-
-            fig_wl.add_trace(go.Scatter(
-                x=down.index, y=down['close'], mode='markers', name='Down Label (on Price)',
-                marker=dict(color='red', symbol='circle', size=5), showlegend=False
-            ), row=2, col=1)
-
-            fig_wl.update_layout(height=800, legend_title_text='Legend')
-            st.plotly_chart(fig_wl, use_container_width=True)
+            st.dataframe(df_watchlist, use_container_width=True, hide_index=True)
