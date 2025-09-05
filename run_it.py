@@ -328,41 +328,15 @@ with tab3:
                     column_order = ['Token', 'MLP Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias', 'Net BPS', 'Wavelet Accuracy', 'Residual Momentum']
                     st.dataframe(df_display_formatted[column_order], use_container_width=True, hide_index=True)
 
-                # --- DEFINE THE CONSISTENT COLOR PALETTE HERE ---
-                phase_colors = {
-                    'Bull': '#60a971', 
-                    'Bear': '#d6454f', 
-                    'Correction': '#f8a541', 
-                    'Rebound': '#55b6e6'
-                }
+                phase_colors = {'Bull': '#60a971', 'Bear': '#d6454f', 'Correction': '#f8a541', 'Rebound': '#55b6e6'}
 
                 with col2:
                     st.subheader("Market Sentiment")
                     st.markdown("<h5 style='text-align: center;'>Market Phase Distribution</h5>", unsafe_allow_html=True)
                     phase_counts = df_watchlist['Market Phase'].value_counts()
-                    
-                    fig_donut = px.pie(
-                        values=phase_counts.values, 
-                        names=phase_counts.index, 
-                        hole=0.5, 
-                        color=phase_counts.index, 
-                        color_discrete_map=phase_colors # Use the defined color map
-                    )
-                    
-                    fig_donut.update_traces(
-                        textinfo='label+percent',
-                        textfont=dict(color='#34495e', size=14),
-                        hoverinfo='label+percent+value'
-                    )
-                    
-                    fig_donut.add_annotation(
-                        text="<b>PERMUTATION</b><br>RESEARCH",
-                        x=0.5, y=0.5, xref="paper", yref="paper",
-                        showarrow=False,
-                        font=dict(size=16, color="#2c3e50"),
-                        align="center"
-                    )
-                    
+                    fig_donut = px.pie(values=phase_counts.values, names=phase_counts.index, hole=0.5, color=phase_counts.index, color_discrete_map=phase_colors)
+                    fig_donut.update_traces(textinfo='label+percent', textfont=dict(color='#34495e', size=14), hoverinfo='label+percent+value')
+                    fig_donut.add_annotation(text="<b>PERMUTATION</b><br>RESEARCH", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False, font=dict(size=16, color="#2c3e50"), align="center")
                     fig_donut.update_layout(showlegend=False, margin=dict(t=20, b=20, l=20, r=20))
                     st.plotly_chart(fig_donut, use_container_width=True)
 
@@ -372,14 +346,13 @@ with tab3:
                 if df_watchlist.empty:
                     st.info("No assets to display in the quadrant.")
                 else:
-                    # --- QUADRANT CHART UPDATED TO USE CONSISTENT COLORS ---
                     fig_quadrant = px.scatter(
                         df_watchlist,
                         x='Residual Momentum',
                         y='Bull/Bear Bias',
                         text='Token',
-                        color='Market Phase',          # This tells Plotly which column to use for color
-                        color_discrete_map=phase_colors, # This applies our specific color palette
+                        color='Market Phase',
+                        color_discrete_map=phase_colors,
                         hover_data={'Residual Momentum': ':.2f', 'Bull/Bear Bias': ':.2%'}
                     )
 
@@ -388,8 +361,22 @@ with tab3:
                     
                     fig_quadrant.add_annotation(text="<b>Leading Bulls</b><br>(Strong Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
                     fig_quadrant.add_annotation(text="<b>Lagging Bulls</b><br>(Strong Trend, Underperforming)", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
-                    fig_quadrant.add_annotation(text="<b>Strongest Bears</b><br>(Bear Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
-                    fig_quadrant.add_annotation(text="<b>Weakest Bears</b><br>(Bear Trend, Underperforming)", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    fig_quadrant.add_annotation(text="<b>Reversal Candidates</b><br>(Bear Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_quadrant.add_annotation(text="<b>Lagging Bears</b><br>(Bear Trend, Underperforming)", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
+
+                    # --- NEW: BACKGROUND WATERMARK ANNOTATION ---
+                    fig_quadrant.add_annotation(
+                        text="<b>PERMUTATION RESEARCH ©</b>",
+                        xref="paper", yref="paper",
+                        x=0.5, y=0.5,  # Center of the chart
+                        showarrow=False,
+                        font=dict(
+                            size=72,
+                            color="rgba(220, 220, 220, 0.2)" # Very light gray, semi-transparent
+                        ),
+                        align="center"
+                    )
+                    # --- END OF NEW CODE ---
 
                     fig_quadrant.update_traces(textposition='top center', textfont_size=10)
                     fig_quadrant.update_yaxes(title_text="Bull/Bear Bias (Long-Term Trend)", zeroline=False, tickformat=".0%")
@@ -401,6 +388,7 @@ with tab3:
                     )
 
                     st.plotly_chart(fig_quadrant, use_container_width=True)
+
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
 # ==============================================================================
