@@ -219,6 +219,9 @@ def generate_residual_momentum_factor(asset_prices, market_prices, window=30):
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
+# ==============================================================================
+# TAB 3: COMPREHENSIVE WATCHLIST
+# ==============================================================================
 with tab3:
     st.header("📈 Comprehensive Watchlist")
     st.markdown("""
@@ -335,7 +338,6 @@ with tab3:
 
                 with col2:
                     st.subheader("Market Sentiment")
-                    # --- NEW: Centered markdown title for better placement ---
                     st.markdown("<h5 style='text-align: center;'>Market Phase Distribution</h5>", unsafe_allow_html=True)
                     
                     phase_counts = df_watchlist['Market Phase'].value_counts()
@@ -348,13 +350,26 @@ with tab3:
                     fig_donut = px.pie(
                         values=phase_counts.values, 
                         names=phase_counts.index,
-                        hole=0.4,
-                        # title="Market Phase Distribution", # <-- REMOVED from here
+                        hole=0.5, # Increased hole size slightly for better text fit
                         color=phase_counts.index,
                         color_discrete_map=phase_colors
                     )
                     fig_donut.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+percent+value')
-                    # Set top margin to 0 as the title is now handled by Streamlit
+                    
+                    # --- NEW: Add annotation in the center ---
+                    fig_donut.add_annotation(
+                        text="PERMUTATION<br>RESEARCH",
+                        x=0.5, y=0.5,
+                        xref="paper", yref="paper",
+                        showarrow=False,
+                        font=dict(
+                            size=14,
+                            color="gray"
+                        ),
+                        align="center"
+                    )
+                    # --- END of new code ---
+
                     fig_donut.update_layout(showlegend=False, margin=dict(t=0, b=20, l=20, r=20))
                     st.plotly_chart(fig_donut, use_container_width=True)
 
