@@ -357,32 +357,47 @@ with tab3:
                     fig_donut = px.pie(
                         values=phase_counts.values, 
                         names=phase_counts.index,
-                        hole=0.5,
+                        hole=0.55, # Increased hole size for text
                         color=phase_counts.index,
                         color_discrete_map=phase_colors
                     )
-                    fig_donut.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+percent+value')
                     
-                    # --- UPDATED ANNOTATION WITH TOURNEY FONT ---
+                    fig_donut.update_traces(
+                        textposition='inside', 
+                        textinfo='percent+label',
+                        hoverinfo='label+percent+value',
+                        textfont=dict(color='#34495e', size=14) # Dark text for better contrast
+                    )
+                    
+                    # --- ANNOTATION CORRECTED TO MATCH THE IMAGE ---
+                    styled_text = """
+                    <span style="font-family: 'Tourney', sans-serif;
+                                 font-weight: 100;
+                                 font-style: italic;
+                                 font-size: 20px;
+                                 color: white;
+                                 text-shadow: -1.5px -1.5px 0 #34495e,
+                                              1.5px -1.5px 0 #34495e,
+                                              -1.5px 1.5px 0 #34495e,
+                                              1.5px 1.5px 0 #34495e;">
+                        PERMUTATION<br>RESEARCH
+                    </span>
+                    """
+                    
                     fig_donut.add_annotation(
-                        text="""<span style="font-family: 'Tourney', sans-serif; font-weight: 100; font-style: italic; font-size: 18px;">
-                                PERMUTATION<br>RESEARCH
-                                </span>""",
+                        text=styled_text,
                         x=0.5, y=0.5,
                         xref="paper", yref="paper",
                         showarrow=False,
-                        font=dict(
-                            color="black"
-                        ),
                         align="center"
                     )
-                    # --- END OF UPDATE ---
+                    # --- END OF CORRECTION ---
 
-                    fig_donut.update_layout(showlegend=False, margin=dict(t=0, b=20, l=20, r=20))
+                    fig_donut.update_layout(
+                        showlegend=False, 
+                        margin=dict(t=0, b=20, l=20, r=20)
+                    )
                     st.plotly_chart(fig_donut, use_container_width=True)
-# ==============================================================================
-# TAB 4: WAVELET SIGNAL VISUALIZER
-# ==============================================================================
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
 # ==============================================================================
