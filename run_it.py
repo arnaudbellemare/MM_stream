@@ -31,12 +31,20 @@ st.markdown("An interactive dashboard for backtesting strategies and analyzing a
 def fetch_data(symbol, timeframe, limit):
     st.info(f"Fetching {limit} bars of {symbol} {timeframe} data from Kraken...")
     exchange = ccxt.kraken()
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-    df.set_index('timestamp', inplace=True)
-    df['stamp'] = df.index
-    return df
+    try:
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        if len(ohlcv) == 0:
+            st.warning(f"No data returned for {symbol} from Kraken. It might be an invalid pair.")
+            return pd.DataFrame()
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+        df['stamp'] = df.index
+        return df
+    except Exception as e:
+        st.error(f"Failed to fetch data for {symbol}: {e}")
+        return pd.DataFrame()
+
 
 def ema(data, window):
     return pd.Series(data).ewm(span=window, adjust=False).mean().values
@@ -104,30 +112,33 @@ with tab1:
     if st.sidebar.button("🚀 Run Backtest", key="run_bt"):
         with st.spinner("Executing backtest pipeline... Please wait."):
             df_raw_bt = fetch_data(symbol_bt, timeframe_bt, data_limit_bt)
-            if indicator_type == "HawkesBSI": df_indicator = calculate_hawkes_bsi(df_raw_bt, kappa)
-            else: df_indicator = calculate_hawkes_bvc(df_raw_bt, volatility_window, kappa)
-            if df_indicator.empty: st.error("Error: The dataset is empty after feature calculation.")
+            if df_raw_bt.empty:
+                st.error(f"Could not fetch data for {symbol_bt}. Please check the symbol and try again.")
             else:
-                trades_bt, equity_bt = run_hawkes_backtest(df_indicator, initial_cash, trade_size, entry_threshold)
-                st.success("✅ Backtest complete!")
-                st.subheader(f"Strategy: {indicator_type}"); final_equity = equity_bt.iloc[-1] if not equity_bt.empty else initial_cash; total_return = (final_equity / initial_cash - 1) * 100
-                st.metric("Final Equity (USD)", f"${final_equity:,.2f}"); st.metric("Total Return", f"{total_return:.2f}%"); st.metric("Total Trades", len(trades_bt))
+                if indicator_type == "HawkesBSI": df_indicator = calculate_hawkes_bsi(df_raw_bt, kappa)
+                else: df_indicator = calculate_hawkes_bvc(df_raw_bt, volatility_window, kappa)
+                if df_indicator.empty: st.error("Error: The dataset is empty after feature calculation.")
+                else:
+                    trades_bt, equity_bt = run_hawkes_backtest(df_indicator, initial_cash, trade_size, entry_threshold)
+                    st.success("✅ Backtest complete!")
+                    st.subheader(f"Strategy: {indicator_type}"); final_equity = equity_bt.iloc[-1] if not equity_bt.empty else initial_cash; total_return = (final_equity / initial_cash - 1) * 100
+                    st.metric("Final Equity (USD)", f"${final_equity:,.2f}"); st.metric("Total Return", f"{total_return:.2f}%"); st.metric("Total Trades", len(trades_bt))
 
-                def plot_backtest_results(df_plot, equity_curve, trades, symbol_to_plot):
-                    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, subplot_titles=('Strategy Equity Curve', f'{indicator_type} Indicator', f'{symbol_to_plot} Price & Trades'), row_heights=[0.25, 0.25, 0.5])
-                    fig.add_trace(go.Scatter(x=equity_curve.index, y=equity_curve, mode='lines', name='Equity'), row=1, col=1)
-                    fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['indicator'], mode='lines', name=indicator_type, line=dict(color='orange')), row=2, col=1)
-                    fig.add_hline(y=entry_threshold, line_width=2, line_dash="dash", line_color="green", row=2, col=1, annotation_text="Buy Threshold"); fig.add_hline(y=-entry_threshold, line_width=2, line_dash="dash", line_color="red", row=2, col=1, annotation_text="Sell Threshold")
-                    fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['close'], mode='lines', name=f'{symbol_to_plot} Price', line=dict(color='blue')), row=3, col=1)
-                    if not trades.empty:
-                        buys = trades[trades['type'] == 'BUY']; sells = trades[trades['type'] == 'SELL']; exits = trades[trades['type'].str.contains('EXIT')]
-                        fig.add_trace(go.Scatter(x=buys['t'], y=buys['p'], mode='markers', name='Buys', marker=dict(color='lime', symbol='triangle-up', size=10)), row=3, col=1)
-                        fig.add_trace(go.Scatter(x=sells['t'], y=sells['p'], mode='markers', name='Sells', marker=dict(color='magenta', symbol='triangle-down', size=10)), row=3, col=1)
-                        fig.add_trace(go.Scatter(x=exits['t'], y=exits['p'], mode='markers', name='Exits', marker=dict(color='black', symbol='x', size=8)), row=3, col=1)
-                    fig.update_layout(height=900); return fig
+                    def plot_backtest_results(df_plot, equity_curve, trades, symbol_to_plot):
+                        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, subplot_titles=('Strategy Equity Curve', f'{indicator_type} Indicator', f'{symbol_to_plot} Price & Trades'), row_heights=[0.25, 0.25, 0.5])
+                        fig.add_trace(go.Scatter(x=equity_curve.index, y=equity_curve, mode='lines', name='Equity'), row=1, col=1)
+                        fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['indicator'], mode='lines', name=indicator_type, line=dict(color='orange')), row=2, col=1)
+                        fig.add_hline(y=entry_threshold, line_width=2, line_dash="dash", line_color="green", row=2, col=1, annotation_text="Buy Threshold"); fig.add_hline(y=-entry_threshold, line_width=2, line_dash="dash", line_color="red", row=2, col=1, annotation_text="Sell Threshold")
+                        fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['close'], mode='lines', name=f'{symbol_to_plot} Price', line=dict(color='blue')), row=3, col=1)
+                        if not trades.empty:
+                            buys = trades[trades['type'] == 'BUY']; sells = trades[trades['type'] == 'SELL']; exits = trades[trades['type'].str.contains('EXIT')]
+                            fig.add_trace(go.Scatter(x=buys['t'], y=buys['p'], mode='markers', name='Buys', marker=dict(color='lime', symbol='triangle-up', size=10)), row=3, col=1)
+                            fig.add_trace(go.Scatter(x=sells['t'], y=sells['p'], mode='markers', name='Sells', marker=dict(color='magenta', symbol='triangle-down', size=10)), row=3, col=1)
+                            fig.add_trace(go.Scatter(x=exits['t'], y=exits['p'], mode='markers', name='Exits', marker=dict(color='black', symbol='x', size=8)), row=3, col=1)
+                        fig.update_layout(height=900); return fig
 
-                st.plotly_chart(plot_backtest_results(df_indicator, equity_bt, trades_bt, symbol_bt), use_container_width=True)
-                with st.expander("Show Raw Trades Data"): st.dataframe(trades_bt)
+                    st.plotly_chart(plot_backtest_results(df_indicator, equity_bt, trades_bt, symbol_bt), use_container_width=True)
+                    with st.expander("Show Raw Trades Data"): st.dataframe(trades_bt)
 
 # ==============================================================================
 # TAB 2: SG SWING ANALYSIS
@@ -143,7 +154,8 @@ with tab2:
     span_window_sg = st.sidebar.slider("SpanB Window", 20, 100, 52, key="sg_span")
     if st.sidebar.button("🔬 Run SG Analysis", key="run_sg"):
         df_sg = fetch_data(symbol_sg, '1h', 1000)
-        if len(df_sg) < window_long_sg: st.error("Not enough data for the selected SG window length.")
+        if df_sg.empty or len(df_sg) < window_long_sg:
+            st.error("Not enough data for the selected SG window length. Please select a shorter window or check the symbol.")
         else:
             close_prices = df_sg['close'].values
             smoothed_short = savgol_filter(close_prices, window_length=window_short_sg, polyorder=polyorder_sg)
@@ -196,7 +208,7 @@ with tab3:
         log_ho = np.log(data["high"] / data["open"]); log_lo = np.log(data["low"] / data["open"]); log_co = np.log(data["close"] / data["open"])
         return np.sqrt(np.mean(log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)))
 
-    # --- NEW FUNCTION TO GENERATE THE WATCHLIST ---
+    # --- CORRECTED FUNCTION TO GENERATE THE WATCHLIST ---
     @st.cache_data
     def generate_watchlist(symbols, timeframe, limit):
         st.info(f"Generating watchlist for {len(symbols)} tokens...")
@@ -204,10 +216,12 @@ with tab3:
         progress_bar = st.progress(0, text="Analyzing tokens for watchlist...")
         for i, symbol in enumerate(symbols):
             try:
-                # Use .func to bypass caching for individual runs inside the loop
-                df = fetch_data.func(symbol, timeframe, limit) 
-                if df.empty: continue
-                
+                # --- FIX: REMOVED the erroneous .func call ---
+                df = fetch_data(symbol, timeframe, limit)
+                if df.empty or len(df) < 50: # Skip if not enough data
+                    st.warning(f"Skipping {symbol} for watchlist due to insufficient data.")
+                    continue
+
                 # Perform wavelet analysis
                 data_train = df["close"].values
                 timestamps_train = df.index
@@ -216,7 +230,7 @@ with tab3:
                 uthresh = sigma * np.sqrt(2 * np.log(len(data_train)))
                 coeffs_thresh = [coeffs[0]] + [pywt.threshold(c, uthresh, mode='soft') for c in coeffs[1:]]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')
-                
+
                 # Align data lengths
                 min_len = min(len(data_denoised), len(timestamps_train))
                 data_denoised = data_denoised[:min_len]
@@ -224,22 +238,23 @@ with tab3:
 
                 # Labeling and performance
                 w = rogers_satchell_volatility(df)
-                labels = auto_labeling.func(tuple(data_denoised), tuple(df.index), w) # Use .func
+                # --- FIX: REMOVED the erroneous .func call ---
+                labels = auto_labeling(tuple(data_denoised), tuple(df.index), w)
                 gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0)
                 acc = accuracy_score(gt, labels)
-                
+
                 watchlist_results.append({'Token': symbol, 'Wavelet Accuracy': f"{acc:.2%}"})
             except Exception as e:
-                # Catch errors for specific tokens (e.g., not found on exchange)
-                st.warning(f"Could not process {symbol} for watchlist. Error: {str(e)[:100]}")
-            
+                # Catch other potential errors during analysis
+                st.warning(f"Could not process {symbol} for watchlist. Error: {e}")
+
             # Update progress bar
             progress_bar.progress((i + 1) / len(symbols), text=f"Analyzing {symbol}...")
-        
+
         progress_bar.empty() # Clear the progress bar
         if not watchlist_results:
             return pd.DataFrame()
-            
+
         # Create and sort the final DataFrame
         df_watchlist = pd.DataFrame(watchlist_results)
         return df_watchlist.sort_values(by='Wavelet Accuracy', ascending=False).reset_index(drop=True)
@@ -247,61 +262,61 @@ with tab3:
 
     if st.sidebar.button("🌊 Run Wavelet Analysis", key="run_wl"):
         df_wl = fetch_data(symbol_wl, '1h', 1000)
-        data_train = df_wl["close"].values; timestamps_train = df_wl.index
-        st.info("Denoising data with Wavelets..."); coeffs = pywt.wavedec(data_train, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1])) / 0.6745
-        uthresh = sigma * np.sqrt(2 * np.log(len(data_train))); coeffs_thresh = [coeffs[0]] + [pywt.threshold(c, uthresh, mode='soft') for c in coeffs[1:]]; data_train_denoised = pywt.waverec(coeffs_thresh, 'db4')
-        min_len = min(len(data_train_denoised), len(timestamps_train)); data_train_denoised = data_train_denoised[:min_len]; timestamps_train = timestamps_train[:min_len]; df_wl = df_wl.iloc[:min_len].copy()
-        df_wl['denoised_close'] = data_train_denoised
-        
-        if threshold_type_wl == "Volatility-based": w_used = rogers_satchell_volatility(df_wl); st.write(f"**Volatility-based threshold (w):** `{w_used:.4f}`")
-        else: w_used = constant_w_wl; st.write(f"**Using constant threshold (w):** `{w_used:.4f}`")
-        
-        st.info("Auto-labeling denoised data...")
-        labels_wavelet = auto_labeling(tuple(data_train_denoised), tuple(timestamps_train), w_used)
-        df_wl['label'] = labels_wavelet
-        
-        gt_labels = np.sign(df_wl['close'].shift(-1) - df_wl['close']).fillna(0)
-        accuracy = accuracy_score(gt_labels, labels_wavelet); precision = precision_score(gt_labels, labels_wavelet, average='weighted', zero_division=0); recall = recall_score(gt_labels, labels_wavelet, average='weighted', zero_division=0)
-        
-        st.header("Performance Metrics")
-        
-        # --- MODIFICATION: Changed to 4 columns to include the watchlist ---
-        col1, col2, col3, col4 = st.columns([1.5, 1.5, 1.5, 2.5])
-        col1.metric("Accuracy", f"{accuracy:.2%}"); col2.metric("Precision", f"{precision:.2%}"); col3.metric("Recall", f"{recall:.2%}")
+        if df_wl.empty:
+            st.error(f"Could not fetch data for {symbol_wl}. Cannot perform analysis.")
+        else:
+            data_train = df_wl["close"].values; timestamps_train = df_wl.index
+            st.info("Denoising data with Wavelets..."); coeffs = pywt.wavedec(data_train, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1])) / 0.6745
+            uthresh = sigma * np.sqrt(2 * np.log(len(data_train))); coeffs_thresh = [coeffs[0]] + [pywt.threshold(c, uthresh, mode='soft') for c in coeffs[1:]]; data_train_denoised = pywt.waverec(coeffs_thresh, 'db4')
+            min_len = min(len(data_train_denoised), len(timestamps_train)); data_train_denoised = data_train_denoised[:min_len]; timestamps_train = timestamps_train[:min_len]; df_wl = df_wl.iloc[:min_len].copy()
+            df_wl['denoised_close'] = data_train_denoised
 
-        # --- MODIFICATION: Added the watchlist in the new col4 ---
-        with col4:
-            st.subheader("🏆 Watchlist")
-            st.markdown("Top tokens by wavelet model accuracy.")
-            # Define symbols for the watchlist
-            watchlist_symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'BNB/USDT', 'DOGE/USDT', 'ADA/USDT']
-            df_watchlist = generate_watchlist(watchlist_symbols, '1h', 1000)
-            if not df_watchlist.empty:
-                st.dataframe(df_watchlist, use_container_width=True, hide_index=True)
-            else:
-                st.warning("Could not generate the watchlist.")
+            if threshold_type_wl == "Volatility-based": w_used = rogers_satchell_volatility(df_wl); st.write(f"**Volatility-based threshold (w):** `{w_used:.4f}`")
+            else: w_used = constant_w_wl; st.write(f"**Using constant threshold (w):** `{w_used:.4f}`")
 
-        
-        st.header("Charts")
-        fig_wl = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Denoised Data & Labels', f'Original Price for {symbol_wl}'))
-        
-        fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['denoised_close'], name='Wavelet Denoised Price', line=dict(color='orange')), row=1, col=1)
-        up = df_wl[df_wl['label']==1]
-        down = df_wl[df_wl['label']==-1]
-        fig_wl.add_trace(go.Scatter(x=up.index, y=up['denoised_close'], mode='markers', name='Up Label', marker=dict(color='deepskyblue', symbol='circle', size=5)), row=1, col=1)
-        fig_wl.add_trace(go.Scatter(x=down.index, y=down['denoised_close'], mode='markers', name='Down Label', marker=dict(color='red', symbol='circle', size=5)), row=1, col=1)
-        
-        fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['close'], name='Original Price', line=dict(color='gray')), row=2, col=1)
-        
-        fig_wl.add_trace(go.Scatter(
-            x=up.index, y=up['close'], mode='markers', name='Up Label (on Price)', 
-            marker=dict(color='deepskyblue', symbol='circle', size=5), showlegend=False 
-        ), row=2, col=1)
-        
-        fig_wl.add_trace(go.Scatter(
-            x=down.index, y=down['close'], mode='markers', name='Down Label (on Price)', 
-            marker=dict(color='red', symbol='circle', size=5), showlegend=False
-        ), row=2, col=1)
+            st.info("Auto-labeling denoised data...")
+            labels_wavelet = auto_labeling(tuple(data_train_denoised), tuple(timestamps_train), w_used)
+            df_wl['label'] = labels_wavelet
 
-        fig_wl.update_layout(height=800, legend_title_text='Legend')
-        st.plotly_chart(fig_wl, use_container_width=True)
+            gt_labels = np.sign(df_wl['close'].shift(-1) - df_wl['close']).fillna(0)
+            accuracy = accuracy_score(gt_labels, labels_wavelet); precision = precision_score(gt_labels, labels_wavelet, average='weighted', zero_division=0); recall = recall_score(gt_labels, labels_wavelet, average='weighted', zero_division=0)
+
+            st.header("Performance Metrics")
+
+            col1, col2, col3, col4 = st.columns([1.5, 1.5, 1.5, 2.5])
+            col1.metric("Accuracy", f"{accuracy:.2%}"); col2.metric("Precision", f"{precision:.2%}"); col3.metric("Recall", f"{recall:.2%}")
+
+            with col4:
+                st.subheader("🏆 Watchlist")
+                st.markdown("Top tokens by wavelet model accuracy.")
+                # You can expand this list with any other symbols available on Kraken
+                watchlist_symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'DOGE/USDT', 'ADA/USDT', 'AVAX/USDT', 'DOT/USDT']
+                df_watchlist = generate_watchlist(watchlist_symbols, '1h', 1000)
+                if not df_watchlist.empty:
+                    st.dataframe(df_watchlist, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Could not generate the watchlist.")
+
+            st.header("Charts")
+            fig_wl = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=('Denoised Data & Labels', f'Original Price for {symbol_wl}'))
+
+            fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['denoised_close'], name='Wavelet Denoised Price', line=dict(color='orange')), row=1, col=1)
+            up = df_wl[df_wl['label']==1]
+            down = df_wl[df_wl['label']==-1]
+            fig_wl.add_trace(go.Scatter(x=up.index, y=up['denoised_close'], mode='markers', name='Up Label', marker=dict(color='deepskyblue', symbol='circle', size=5)), row=1, col=1)
+            fig_wl.add_trace(go.Scatter(x=down.index, y=down['denoised_close'], mode='markers', name='Down Label', marker=dict(color='red', symbol='circle', size=5)), row=1, col=1)
+
+            fig_wl.add_trace(go.Scatter(x=df_wl.index, y=df_wl['close'], name='Original Price', line=dict(color='gray')), row=2, col=1)
+
+            fig_wl.add_trace(go.Scatter(
+                x=up.index, y=up['close'], mode='markers', name='Up Label (on Price)',
+                marker=dict(color='deepskyblue', symbol='circle', size=5), showlegend=False
+            ), row=2, col=1)
+
+            fig_wl.add_trace(go.Scatter(
+                x=down.index, y=down['close'], mode='markers', name='Down Label (on Price)',
+                marker=dict(color='red', symbol='circle', size=5), showlegend=False
+            ), row=2, col=1)
+
+            fig_wl.update_layout(height=800, legend_title_text='Legend')
+            st.plotly_chart(fig_wl, use_container_width=True)
