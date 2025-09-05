@@ -204,14 +204,48 @@ def auto_labeling(data, w):
     labels[FP_N:]=Cid
     return labels
 
-def generate_residual_momentum_factor(asset_prices, market_prices, window=30):
+def generate_residual_momentum_factor(asset_prices, market_prices, beta_window=180, momentum_window=10):
+    """
+    Calculates a residual momentum factor based on academic best practices for crypto.
+
+    This involves a two-step process aligned with recent research findings:
+    1.  A long-lookback regression (beta_window) to estimate a stable market beta
+        (vs. BTC) and calculate daily idiosyncratic (residual) returns.
+    2.  A short-lookback window (momentum_window) to calculate the momentum of
+        these residual returns, capturing the rapid trend decay in crypto.
+
+    Args:
+        asset_prices (pd.Series): Series of asset close prices.
+        market_prices (pd.Series): Series of market (e.g., BTC) close prices.
+        beta_window (int): The look-back period for calculating rolling beta.
+                           Research (Plotnik, 2025) suggests 90-180 days for stability.
+                           Defaults to 180.
+        momentum_window (int): The look-back period for the residual momentum formation.
+                               Research (Yang, 2025; Liu et al., 2022) points to a
+                               1-4 week window. Defaults to 10 trading days (2 weeks).
+
+    Returns:
+        pd.Series: The calculated residual momentum factor, representing the
+                   cumulative residual drift over the formation window.
+    """
+    # Step 1: Calculate daily log returns for both asset and market
     asset_returns = np.log(asset_prices / asset_prices.shift(1))
     market_returns = np.log(market_prices / market_prices.shift(1))
-    rolling_cov = asset_returns.rolling(window=window).cov(market_returns)
-    rolling_var = market_returns.rolling(window=window).var()
+
+    # Step 2: Calculate rolling beta using the long 'beta_window' for stability
+    rolling_cov = asset_returns.rolling(window=beta_window).cov(market_returns)
+    rolling_var = market_returns.rolling(window=beta_window).var()
     beta = rolling_cov / rolling_var
-    residual = asset_returns - (beta * market_returns)
-    return (residual-residual.rolling(window).mean())/residual.rolling(window).std()
+
+    # Step 3: Calculate the daily idiosyncratic (residual) returns
+    residual_returns = asset_returns - (beta * market_returns)
+
+    # Step 4: Calculate momentum on the residual returns using the short 'momentum_window'.
+    # The sum of recent residual returns is a direct measure of the "coin-specific drift"
+    # mentioned in the research.
+    residual_momentum = residual_returns.rolling(window=momentum_window).sum()
+
+    return residual_momentum
 
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
