@@ -46,6 +46,35 @@ def fetch_data(symbol, timeframe, limit):
 def ema(data, window):
     return pd.Series(data).ewm(span=window, adjust=False).mean().values
 
+def generate_residual_momentum_factor(all_prices_df: pd.DataFrame, market_prices_series: pd.Series, windows: list[int] = [10, 30, 60, 90, 120], weights: list[float] = [0.5, 0.4, 0.3, 0.2, 0.1]) -> pd.DataFrame:
+    """Generates a standardized, weighted residual momentum factor for all assets."""
+    prices_lagged = all_prices_df.shift(1)
+    market_lagged = market_prices_series.shift(1)
+    asset_returns = np.log(prices_lagged / prices_lagged.shift(1))
+    market_returns = np.log(market_lagged / market_lagged.shift(1))
+    aggregated_residual = pd.DataFrame(0.0, index=prices_lagged.index, columns=prices_lagged.columns)
+    total_weight = 0.0
+    for window, weight in zip(windows, weights):
+        if weight <= 0:
+            continue
+        rolling_cov = asset_returns.rolling(window=window).cov(market_returns)
+        rolling_var = market_returns.rolling(window=window).var()
+        beta = rolling_cov.div(rolling_var.replace(0, np.nan), axis=0)
+        beta_times_market = beta.multiply(market_returns, axis=0)
+        residual = asset_returns.subtract(beta_times_market)
+        aggregated_residual += residual.fillna(0) * weight
+        total_weight += weight
+    raw_scores = (aggregated_residual / total_weight) * 100 if total_weight > 0 else aggregated_residual
+
+    # --- CORRECTED STANDARDIZATION ---
+    mean_res = raw_scores.mean()
+    std_res = raw_scores.std()
+    std_res[std_res == 0] = np.nan
+    standardized_scores = (raw_scores - mean_res) / std_res
+
+    return standardized_scores.fillna(0)
+
+
 # ==============================================================================
 # TAB STRUCTURE
 # ==============================================================================
@@ -250,10 +279,17 @@ with tab3:
         watchlist_results = []
         progress_bar = st.progress(0, text="Initializing watchlist analysis...")
         
+        market_symbol = 'BTC/USD'
+        market_df = fetch_data(market_symbol, timeframe, limit)
+        if market_df.empty:
+            st.error(f"Could not fetch market data ({market_symbol}) for residual momentum calculation.")
+            return pd.DataFrame()
+        market_prices = market_df['close']
+
         for i, symbol in enumerate(symbols):
             try:
                 df = fetch_data(symbol, timeframe, limit)
-                if df.empty or len(df) < 50: continue
+                if df.empty or len(df) < 120: continue # Min window for residual momentum
 
                 data_train = df["close"].values; timestamps_train = df.index
                 coeffs = pywt.wavedec(data_train, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1])) / 0.6745
@@ -272,12 +308,21 @@ with tab3:
                 raw_bias = (bull_dots - bear_dots) / total_dots if total_dots > 0 else 0
                 
                 gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0); accuracy = accuracy_score(gt, df['label'])
-                
+
+                # --- Calculate Residual Momentum ---
+                aligned_asset_prices, aligned_market_prices = df[['close']].align(market_prices, join='inner', axis=0)
+                if aligned_asset_prices.empty or len(aligned_asset_prices) < 120:
+                    residual_mom_score = np.nan
+                else:
+                    residual_mom_df = generate_residual_momentum_factor(aligned_asset_prices, aligned_market_prices)
+                    residual_mom_score = residual_mom_df.iloc[-1, 0] if not residual_mom_df.empty else np.nan
+
                 watchlist_results.append({
                     'Token': symbol, 
                     'Net BPS': raw_bps, 
                     'Bull/Bear Bias': raw_bias,
-                    'Accuracy': f"{accuracy:.2%}"
+                    'Accuracy': f"{accuracy:.2%}",
+                    'Residual Momentum': residual_mom_score
                 })
 
             except Exception as e:
@@ -290,14 +335,13 @@ with tab3:
 
         df_watchlist = pd.DataFrame(watchlist_results)
         
-        # --- NEW SORTING LOGIC FOR TREND PURITY ---
-        # 1. Sort by Bias Descending (most bullish first)
-        # 2. Then, sort by Net BPS Ascending (lowest BPS for that bias group first)
+        # --- Sorting logic for Trend Purity ---
         df_watchlist = df_watchlist.sort_values(by=['Bull/Bear Bias', 'Net BPS'], ascending=[False, True]).reset_index(drop=True)
         
-        # Format the columns AFTER sorting is done
+        # Format the columns AFTER sorting
         df_watchlist['Net BPS'] = df_watchlist['Net BPS'].map('{:,.2f}'.format)
         df_watchlist['Bull/Bear Bias'] = df_watchlist['Bull/Bear Bias'].map('{:,.2%}'.format)
+        df_watchlist['Residual Momentum'] = df_watchlist['Residual Momentum'].map('{:,.3f}'.format)
         
         return df_watchlist
 
@@ -325,12 +369,11 @@ with tab3:
 
             st.header("Performance Metrics")
 
-            col1, col2, col3, col4 = st.columns([1, 1, 1, 2.5])
+            col1, col2, col3, col4 = st.columns([1, 1, 1, 3])
             col1.metric("Accuracy", f"{accuracy:.2%}"); col2.metric("Precision", f"{precision:.2%}"); col3.metric("Recall", f"{recall:.2%}")
 
             with col4:
                 st.subheader("🏆 Trend Purity Watchlist")
-                # --- NEW DESCRIPTION FOR THE NEW RANKING ---
                 st.markdown("Ranked by **Trend Purity**: highest Bull/Bear Bias, then lowest Net BPS.")
                 
                 watchlist_symbols = get_filtered_tickers(min_quote_volume=100000)
