@@ -394,6 +394,9 @@ with tab3:
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
 # ==============================================================================
+# ==============================================================================
+# TAB 4: WAVELET SIGNAL VISUALIZER
+# ==============================================================================
 with tab4:
     st.header("🌊 Wavelet Signal Visualizer")
     st.markdown("This tool denoises price data using wavelets and applies an auto-labeling algorithm to identify potential trend phases. The resulting signals are plotted directly on the price chart.")
@@ -442,29 +445,28 @@ with tab4:
                 down_signals = df_wv[df_wv['label'] == -1]
                 fig_wv.add_trace(go.Scatter(x=down_signals.index, y=down_signals['close'], mode='markers', name='Down Signal', marker=dict(color='crimson', size=7, symbol='circle')))
 
-                # --- NEW: Annotation with precise styling for subtitle ---
                 watermark_text = (
                     f"<span style='font-size: 40px;'><b>{symbol_wv}</b></span><br>"
                     f"<span style='font-size: 12px; line-height: 0.9em;'>Permutation Research ©</span>"
                 )
                 
                 fig_wv.add_annotation(
-                    text=watermark_text,
-                    xref="paper", yref="paper",
-                    x=0.05, y=0.98,
-                    showarrow=False,
+                    text=watermark_text, xref="paper", yref="paper",
+                    x=0.05, y=0.98, showarrow=False,
                     font=dict(color="rgba(0, 0, 0, 0.2)"),
-                    align="center",
-                    xanchor="left",
-                    yanchor="top"
+                    align="center", xanchor="left", yanchor="top"
                 )
-                # --- END of new code ---
 
+                # --- NEW: Updated layout with background color ---
                 fig_wv.update_layout(
                     title=f'Wavelet Signals on {symbol_wv} Close Price',
                     xaxis_title='Date',
                     yaxis_title='Price (USD)',
                     legend_title='Legend',
-                    height=600
+                    height=600,
+                    paper_bgcolor='rgb(255, 255, 240)', # Background for the entire figure area
+                    plot_bgcolor='rgb(255, 255, 240)'  # Background for the plotting area
                 )
+                # --- END of new code ---
+                
                 st.plotly_chart(fig_wv, use_container_width=True)
