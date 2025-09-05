@@ -349,37 +349,51 @@ with tab3:
                     
                     phase_counts = df_watchlist['Market Phase'].value_counts()
                     
+                    # Colors matching the provided image
                     phase_colors = {
-                        'Bull': 'mediumseagreen', 'Bear': 'crimson',
-                        'Correction': 'orange', 'Rebound': 'deepskyblue'
+                        'Bull': 'mediumseagreen', 
+                        'Bear': 'crimson',
+                        'Correction': '#f39c12', # Orange
+                        'Rebound': 'deepskyblue'
                     }
 
                     fig_donut = px.pie(
                         values=phase_counts.values, 
                         names=phase_counts.index,
-                        hole=0.55, # Increased hole size for text
+                        hole=0.6, # Make hole larger for the text effect
                         color=phase_counts.index,
                         color_discrete_map=phase_colors
                     )
                     
+                    # Replicate the style of the slice labels from the image
                     fig_donut.update_traces(
-                        textposition='inside', 
-                        textinfo='percent+label',
+                        textinfo='label+percent',
+                        insidetextorientation='radial', # Rotates text with the slice
                         hoverinfo='label+percent+value',
-                        textfont=dict(color='#34495e', size=14) # Dark text for better contrast
+                        textfont=dict(color='#34495e', size=15) # Dark gray text
                     )
                     
-                    # --- ANNOTATION CORRECTED TO MATCH THE IMAGE ---
+                    # --- ANNOTATION CORRECTED TO MATCH HATCHED/SKETCH STYLE ---
                     styled_text = """
                     <span style="font-family: 'Tourney', sans-serif;
                                  font-weight: 100;
                                  font-style: italic;
-                                 font-size: 20px;
-                                 color: white;
-                                 text-shadow: -1.5px -1.5px 0 #34495e,
-                                              1.5px -1.5px 0 #34495e,
-                                              -1.5px 1.5px 0 #34495e,
-                                              1.5px 1.5px 0 #34495e;">
+                                 font-size: 22px;
+                                 /* 1. The outline is created with text-shadow */
+                                 text-shadow: -1px -1px 0 #2c3e50, 1px -1px 0 #2c3e50, -1px 1px 0 #2c3e50, 1px 1px 0 #2c3e50;
+                                 /* 2. Make the text color itself transparent */
+                                 color: transparent;
+                                 /* 3. The 'fill' is a background image clipped to the text shape */
+                                 background-color: white;
+                                 background-image: repeating-linear-gradient(
+                                    135deg,
+                                    rgba(44, 62, 80, 0.75),
+                                    rgba(44, 62, 80, 0.75) 1px,
+                                    transparent 1px,
+                                    transparent 3.5px
+                                 );
+                                 -webkit-background-clip: text;
+                                 background-clip: text;">
                         PERMUTATION<br>RESEARCH
                     </span>
                     """
@@ -395,12 +409,9 @@ with tab3:
 
                     fig_donut.update_layout(
                         showlegend=False, 
-                        margin=dict(t=0, b=20, l=20, r=20)
+                        margin=dict(t=20, b=20, l=20, r=20)
                     )
                     st.plotly_chart(fig_donut, use_container_width=True)
-# ==============================================================================
-# TAB 4: WAVELET SIGNAL VISUALIZER
-# ==============================================================================
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
 # ==============================================================================
