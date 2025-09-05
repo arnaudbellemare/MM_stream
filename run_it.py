@@ -9,6 +9,7 @@ from sklearn.metrics import accuracy_score
 from scipy.stats import norm
 from scipy.signal import savgol_filter
 import plotly.graph_objects as go
+import plotly.express as px  # <-- IMPORTED FOR DONUT CHART
 from plotly.subplots import make_subplots
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -51,7 +52,6 @@ tab1, tab2, tab3 = st.tabs(["🏆 Hawkes Strategy Backtester", "🔬 SG Swing An
 # TAB 1: HAWKES STRATEGY BACKTESTER (Unchanged)
 # ==============================================================================
 with tab1:
-    # ... (Code for Tab 1 remains unchanged) ...
     st.header("Hawkes Process Momentum Strategy Backtest")
     st.sidebar.header("⚙️ Backtester Configuration")
     st.sidebar.subheader("Indicator & Data Settings")
@@ -138,7 +138,6 @@ with tab1:
 # TAB 2: SG SWING ANALYSIS (Unchanged)
 # ==============================================================================
 with tab2:
-    # ... (Code for Tab 2 remains unchanged) ...
     st.header("Savitzky-Golay Swing Point Detection with SpanB Overlay")
     st.markdown("This is an **offline analysis tool** for visualizing swing points. Note that this method has a **lookahead bias** and is **not** suitable for live trading signals.")
     st.sidebar.subheader("SG Swing Analysis Settings")
@@ -323,9 +322,8 @@ with tab3:
                     'Wavelet Accuracy': accuracy,
                     'Residual Momentum': res_mom_score,
                 })
-            except Exception as e:
-                # This will silently skip tokens that fail for any reason
-                continue
+            except Exception:
+                continue # Silently skip tokens that fail
             finally:
                 progress_bar.progress((i + 1) / len(symbols), text=f"Analyzed {symbol}...")
         
@@ -344,19 +342,44 @@ with tab3:
             if df_watchlist.empty:
                 st.warning("Analysis complete, but no data could be generated for the watchlist.")
             else:
-                st.subheader(" 종합 시장 분석 ওয়াচলিস্ট") # "Comprehensive Market Analysis Watchlist"
+                col1, col2 = st.columns([3, 1]) # 3 parts for the table, 1 for the chart
                 
-                # --- Formatting & Sorting ---
-                df_watchlist = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
-                
-                df_watchlist['Confidence'] = df_watchlist['Confidence'].map('{:.1%}'.format)
-                df_watchlist['Bull/Bear Bias'] = df_watchlist['Bull/Bear Bias'].map('{:+.2%}'.format)
-                df_watchlist['Net BPS'] = df_watchlist['Net BPS'].map('{:,.0f}'.format)
-                df_watchlist['Wavelet Accuracy'] = df_watchlist['Wavelet Accuracy'].map('{:.1%}'.format)
-                df_watchlist['Residual Momentum'] = df_watchlist['Residual Momentum'].map('{:+.2f}'.format)
-                
-                column_order = [
-                    'Token', 'MLP Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias',
-                    'Net BPS', 'Wavelet Accuracy', 'Residual Momentum'
-                ]
-                st.dataframe(df_watchlist[column_order], use_container_width=True, hide_index=True)
+                with col1:
+                    st.subheader(" 종합 시장 분석 ওয়াচলিস্ট") # "Comprehensive Market Analysis Watchlist"
+                    # --- Formatting & Sorting ---
+                    df_display = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
+                    
+                    df_display['Confidence'] = df_display['Confidence'].map('{:.1%}'.format)
+                    df_display['Bull/Bear Bias'] = df_display['Bull/Bear Bias'].map('{:+.2%}'.format)
+                    df_display['Net BPS'] = df_display['Net BPS'].map('{:,.0f}'.format)
+                    df_display['Wavelet Accuracy'] = df_display['Wavelet Accuracy'].map('{:.1%}'.format)
+                    df_display['Residual Momentum'] = df_display['Residual Momentum'].map('{:+.2f}'.format)
+                    
+                    column_order = [
+                        'Token', 'MLP Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias',
+                        'Net BPS', 'Wavelet Accuracy', 'Residual Momentum'
+                    ]
+                    st.dataframe(df_display[column_order], use_container_width=True, hide_index=True)
+
+                with col2:
+                    st.subheader("Market Sentiment")
+                    phase_counts = df_watchlist['Market Phase'].value_counts()
+                    
+                    phase_colors = {
+                        'Bull': 'mediumseagreen',
+                        'Bear': 'crimson',
+                        'Correction': 'orange',
+                        'Rebound': 'deepskyblue'
+                    }
+
+                    fig_donut = px.pie(
+                        values=phase_counts.values, 
+                        names=phase_counts.index,
+                        hole=0.4,
+                        title="Market Phase Distribution",
+                        color=phase_counts.index,
+                        color_discrete_map=phase_colors
+                    )
+                    fig_donut.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+percent+value')
+                    fig_donut.update_layout(showlegend=False, margin=dict(t=40, b=0, l=0, r=0), title_x=0.5)
+                    st.plotly_chart(fig_donut, use_container_width=True)
