@@ -321,7 +321,17 @@ with tab3:
                 df['wv_label'] = wv_labels
                 df['log_ret'] = np.log(df['close']/df['close'].shift(1))
                 df['strat_ret'] = df['wv_label'].shift(1) * df['log_ret']
-                net_bps = df['strat_ret'].sum() * 10000
+# Calculate turnover: number of times the signal changes (from 1 to -1 or vice versa)
+                turnover = (df['wv_label'].shift(1) != df['wv_label']).astype(int).sum()
+
+# Assume transaction_cost_bps per trade (e.g., 20 bps round-trip)
+                transaction_cost_bps = 20
+                total_cost = turnover * (transaction_cost_bps / 10000)
+
+# Net strategy return after costs
+                net_strat_ret = df['strat_ret'].sum() - total_cost
+                net_bps = net_strat_ret * 10000
+
                 bull_bear_bias = df['wv_label'].mean()
                 gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0)
                 accuracy = accuracy_score(gt, df['wv_label'])
