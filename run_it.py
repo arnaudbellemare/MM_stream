@@ -222,6 +222,9 @@ def generate_residual_momentum_factor(asset_prices, market_prices, window=30):
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
+# ==============================================================================
+# TAB 3: COMPREHENSIVE WATCHLIST
+# ==============================================================================
 with tab3:
     st.header("📈 Comprehensive Watchlist")
     st.markdown("""
@@ -299,7 +302,7 @@ with tab3:
                 res_mom_score = res_mom.iloc[-1] if not res_mom.empty and pd.notna(res_mom.iloc[-1]) else 0.0
 
                 results.append({
-                    'Token': symbol, 'MLP Signal': mlp_signal, 'Confidence': confidence, 'Market Phase': market_phase,
+                    'Token': symbol, 'MLP Signal': ml.p_signal, 'Confidence': confidence, 'Market Phase': market_phase,
                     'Bull/Bear Bias': bull_bear_bias, 'Net BPS': net_bps, 'Wavelet Accuracy': accuracy, 'Residual Momentum': res_mom_score,
                 })
             except Exception: continue
@@ -338,7 +341,8 @@ with tab3:
 
                 with col2:
                     st.subheader("Market Sentiment")
-                    st.markdown("<h5 style='text-align: center;'>Market Phase Distribution</h5>", unsafe_allow_html=True)
+                    # Use markdown for a tighter layout
+                    st.markdown("<h5 style='text-align: center; margin-top: -10px;'>Market Phase Distribution</h5>", unsafe_allow_html=True)
                     
                     phase_counts = df_watchlist['Market Phase'].value_counts()
                     
@@ -347,16 +351,16 @@ with tab3:
                         'Correction': 'orange', 'Rebound': 'deepskyblue'
                     }
 
+                    # --- UPDATED CHART CONFIGURATION ---
                     fig_donut = px.pie(
                         values=phase_counts.values, 
                         names=phase_counts.index,
-                        hole=0.5, # Increased hole size slightly for better text fit
+                        hole=0.35,  #<-- Smaller hole
                         color=phase_counts.index,
                         color_discrete_map=phase_colors
                     )
                     fig_donut.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+percent+value')
                     
-                    # --- NEW: Add annotation in the center ---
                     fig_donut.add_annotation(
                         text="PERMUTATION<br>RESEARCH",
                         x=0.5, y=0.5,
@@ -364,15 +368,18 @@ with tab3:
                         showarrow=False,
                         font=dict(
                             size=14,
-                            color="gray"
+                            color="black"  #<-- Text color is now black
                         ),
                         align="center"
                     )
-                    # --- END of new code ---
 
-                    fig_donut.update_layout(showlegend=False, margin=dict(t=0, b=20, l=20, r=20))
+                    fig_donut.update_layout(
+                        showlegend=False, 
+                        height=350,  #<-- Taller chart for a larger appearance
+                        margin=dict(t=0, b=20, l=20, r=20) #<-- Top margin is 0
+                    )
+                    # --- END OF UPDATES ---
                     st.plotly_chart(fig_donut, use_container_width=True)
-
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
 # ==============================================================================
