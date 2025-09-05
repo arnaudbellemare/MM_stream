@@ -464,8 +464,8 @@ with tab4:
                     yaxis_title='Price (USD)',
                     legend_title='Legend',
                     height=600,
-                    paper_bgcolor='rgb(255, 255, 225)', # Background for the entire figure area
-                    plot_bgcolor='rgb(255, 255, 225)'  # Background for the plotting area
+                    paper_bgcolor='rgb(255, 255, 255)', # Background for the entire figure area
+                    plot_bgcolor='rgb(255, 255, 255)'  # Background for the plotting area
                 )
                 # --- END of new code ---
                 
