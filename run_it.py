@@ -208,21 +208,21 @@ with tab3:
         log_ho = np.log(data["high"] / data["open"]); log_lo = np.log(data["low"] / data["open"]); log_co = np.log(data["close"] / data["open"])
         return np.sqrt(np.mean(log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)))
 
-    # --- CORRECTED FUNCTION TO GENERATE THE WATCHLIST ---
+    # --- NEW AND IMPROVED WATCHLIST GENERATION LOGIC ---
     @st.cache_data
     def generate_watchlist(symbols, timeframe, limit):
         st.info(f"Generating watchlist for {len(symbols)} tokens...")
         watchlist_results = []
         progress_bar = st.progress(0, text="Analyzing tokens for watchlist...")
+        
         for i, symbol in enumerate(symbols):
             try:
-                # --- FIX: REMOVED the erroneous .func call ---
                 df = fetch_data(symbol, timeframe, limit)
-                if df.empty or len(df) < 50: # Skip if not enough data
+                if df.empty or len(df) < 50:
                     st.warning(f"Skipping {symbol} for watchlist due to insufficient data.")
                     continue
 
-                # Perform wavelet analysis
+                # Wavelet Denoising
                 data_train = df["close"].values
                 timestamps_train = df.index
                 coeffs = pywt.wavedec(data_train, 'db4', level=4)
@@ -230,34 +230,54 @@ with tab3:
                 uthresh = sigma * np.sqrt(2 * np.log(len(data_train)))
                 coeffs_thresh = [coeffs[0]] + [pywt.threshold(c, uthresh, mode='soft') for c in coeffs[1:]]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')
-
-                # Align data lengths
+                
                 min_len = min(len(data_denoised), len(timestamps_train))
                 data_denoised = data_denoised[:min_len]
                 df = df.iloc[:min_len].copy()
 
-                # Labeling and performance
+                # Labeling and Performance Calculation
                 w = rogers_satchell_volatility(df)
-                # --- FIX: REMOVED the erroneous .func call ---
                 labels = auto_labeling(tuple(data_denoised), tuple(df.index), w)
+                df['label'] = labels
+
+                # --- NEW METRICS CALCULATION ---
+                # 1. Net BPS (Basis Points)
+                df['log_return'] = np.log(df['close'] / df['close'].shift(1))
+                df['strategy_return'] = df['label'].shift(1) * df['log_return']
+                total_bps = df['strategy_return'].sum() * 10000
+
+                # 2. Bull/Bear Bias
+                bull_dots = (df['label'] == 1).sum()
+                bear_dots = (df['label'] == -1).sum()
+                total_dots = bull_dots + bear_dots
+                bull_bear_bias = (bull_dots - bear_dots) / total_dots if total_dots > 0 else 0
+                
+                # 3. Accuracy (kept from before)
                 gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0)
-                acc = accuracy_score(gt, labels)
+                accuracy = accuracy_score(gt, df['label'])
+                
+                watchlist_results.append({
+                    'Token': symbol,
+                    'Net BPS': total_bps, # Store as number for sorting
+                    'Bull/Bear Bias': f"{bull_bear_bias:.2%}",
+                    'Accuracy': f"{accuracy:.2%}"
+                })
 
-                watchlist_results.append({'Token': symbol, 'Wavelet Accuracy': f"{acc:.2%}"})
             except Exception as e:
-                # Catch other potential errors during analysis
                 st.warning(f"Could not process {symbol} for watchlist. Error: {e}")
-
-            # Update progress bar
+            
             progress_bar.progress((i + 1) / len(symbols), text=f"Analyzing {symbol}...")
-
-        progress_bar.empty() # Clear the progress bar
+        
+        progress_bar.empty()
         if not watchlist_results:
             return pd.DataFrame()
 
-        # Create and sort the final DataFrame
+        # Create DataFrame, sort by Net BPS, and format the column for display
         df_watchlist = pd.DataFrame(watchlist_results)
-        return df_watchlist.sort_values(by='Wavelet Accuracy', ascending=False).reset_index(drop=True)
+        df_watchlist = df_watchlist.sort_values(by='Net BPS', ascending=False).reset_index(drop=True)
+        df_watchlist['Net BPS'] = df_watchlist['Net BPS'].map('{:,.2f}'.format) # Format after sorting
+        
+        return df_watchlist
 
 
     if st.sidebar.button("🌊 Run Wavelet Analysis", key="run_wl"):
@@ -283,13 +303,12 @@ with tab3:
 
             st.header("Performance Metrics")
 
-            col1, col2, col3, col4 = st.columns([1.5, 1.5, 1.5, 2.5])
+            col1, col2, col3, col4 = st.columns([1, 1, 1, 2.5]) # Adjusted column widths
             col1.metric("Accuracy", f"{accuracy:.2%}"); col2.metric("Precision", f"{precision:.2%}"); col3.metric("Recall", f"{recall:.2%}")
 
             with col4:
-                st.subheader("🏆 Watchlist")
-                st.markdown("Top tokens by wavelet model accuracy.")
-                # You can expand this list with any other symbols available on Kraken
+                st.subheader("🏆 Wavelet Structure Watchlist")
+                st.markdown("Tokens ranked by **Net BPS**, indicating the strongest directional structure.")
                 watchlist_symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'DOGE/USDT', 'ADA/USDT', 'AVAX/USDT', 'DOT/USDT']
                 df_watchlist = generate_watchlist(watchlist_symbols, '1h', 1000)
                 if not df_watchlist.empty:
