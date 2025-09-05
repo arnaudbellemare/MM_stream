@@ -357,23 +357,26 @@ with tab3:
                     fig_donut = px.pie(
                         values=phase_counts.values, 
                         names=phase_counts.index,
-                        hole=0.45,
+                        hole=0.5,
                         color=phase_counts.index,
                         color_discrete_map=phase_colors
                     )
                     fig_donut.update_traces(textposition='inside', textinfo='percent+label', hoverinfo='label+percent+value')
                     
+                    # --- UPDATED ANNOTATION WITH TOURNEY FONT ---
                     fig_donut.add_annotation(
-                        text="<b>PERMUTATION</b><br><span style='color: #555; font-size: 12px;'>RESEARCH</span>",
+                        text="""<span style="font-family: 'Tourney', sans-serif; font-weight: 100; font-style: italic; font-size: 18px;">
+                                PERMUTATION<br>RESEARCH
+                                </span>""",
                         x=0.5, y=0.5,
                         xref="paper", yref="paper",
                         showarrow=False,
                         font=dict(
-                            size=16,
                             color="black"
                         ),
                         align="center"
                     )
+                    # --- END OF UPDATE ---
 
                     fig_donut.update_layout(showlegend=False, margin=dict(t=0, b=20, l=20, r=20))
                     st.plotly_chart(fig_donut, use_container_width=True)
