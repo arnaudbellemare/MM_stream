@@ -329,6 +329,9 @@ with tab3:
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
 # ==============================================================================
+# ==============================================================================
+# TAB 4: WAVELET SIGNAL VISUALIZER
+# ==============================================================================
 with tab4:
     st.header("🌊 Wavelet Signal Visualizer")
     st.markdown("This tool denoises price data using wavelets and applies an auto-labeling algorithm to identify potential trend phases. The resulting signals are plotted directly on the price chart.")
@@ -378,6 +381,23 @@ with tab4:
                 
                 down_signals = df_wv[df_wv['label'] == -1]
                 fig_wv.add_trace(go.Scatter(x=down_signals.index, y=down_signals['close'], mode='markers', name='Down Signal', marker=dict(color='crimson', size=7, symbol='circle')))
+
+                # --- NEW: Add background annotation ---
+                x_mid = df_wv.index[len(df_wv) // 2]
+                y_mid = (df_wv['close'].max() + df_wv['close'].min()) / 2
+                fig_wv.add_annotation(
+                    x=x_mid,
+                    y=y_mid,
+                    text=symbol_wv,
+                    showarrow=False,
+                    font=dict(
+                        family="Arial, sans-serif",
+                        size=90,
+                        color="rgba(0, 0, 0, 0.15)" # Light black color
+                    ),
+                    align='center'
+                )
+                # --- END of new code ---
 
                 fig_wv.update_layout(title=f'Wavelet Signals on {symbol_wv} Close Price', xaxis_title='Date', yaxis_title='Price (USD)', legend_title='Legend', height=600)
                 st.plotly_chart(fig_wv, use_container_width=True)
