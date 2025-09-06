@@ -204,48 +204,51 @@ def auto_labeling(data, w):
     labels[FP_N:]=Cid
     return labels
 
-def generate_residual_momentum_factor(asset_prices, market_prices, beta_window=180, momentum_window=10):
+def generate_residual_momentum_factor(
+    asset_prices: pd.Series,
+    market_prices: pd.Series,
+    beta_window_range=(90, 180),
+    momentum_window_range=(7, 20),
+    scoring_func=None
+):
     """
-    Calculates a residual momentum factor based on academic best practices for crypto.
-
-    This involves a two-step process aligned with recent research findings:
-    1.  A long-lookback regression (beta_window) to estimate a stable market beta
-        (vs. BTC) and calculate daily idiosyncratic (residual) returns.
-    2.  A short-lookback window (momentum_window) to calculate the momentum of
-        these residual returns, capturing the rapid trend decay in crypto.
+    Grid search for optimal beta_window and momentum_window for residual momentum.
 
     Args:
-        asset_prices (pd.Series): Series of asset close prices.
-        market_prices (pd.Series): Series of market (e.g., BTC) close prices.
-        beta_window (int): The look-back period for calculating rolling beta.
-                           Research (Plotnik, 2025) suggests 90-180 days for stability.
-                           Defaults to 180.
-        momentum_window (int): The look-back period for the residual momentum formation.
-                               Research (Yang, 2025; Liu et al., 2022) points to a
-                               1-4 week window. Defaults to 10 trading days (2 weeks).
+        asset_prices (pd.Series): Asset close prices.
+        market_prices (pd.Series): Market (e.g., BTC) close prices.
+        beta_window_range (tuple): (min, max) for beta_window (inclusive).
+        momentum_window_range (tuple): (min, max) for momentum_window (inclusive).
+        scoring_func (callable): Function to score the signal (default: mean return / std).
 
     Returns:
-        pd.Series: The calculated residual momentum factor, representing the
-                   cumulative residual drift over the formation window.
+        pd.DataFrame: Results with columns ['beta_window', 'momentum_window', 'score'].
     """
-    # Step 1: Calculate daily log returns for both asset and market
-    asset_returns = np.log(asset_prices / asset_prices.shift(1))
-    market_returns = np.log(market_prices / market_prices.shift(1))
+    if scoring_func is None:
+        # Default: Sharpe ratio of the signal (ignoring transaction costs)
+        def scoring_func(signal):
+            returns = signal.shift(1) * np.log(asset_prices / asset_prices.shift(1))
+            return returns.mean() / returns.std()
 
-    # Step 2: Calculate rolling beta using the long 'beta_window' for stability
-    rolling_cov = asset_returns.rolling(window=beta_window).cov(market_returns)
-    rolling_var = market_returns.rolling(window=beta_window).var()
-    beta = rolling_cov / rolling_var
+    results = []
+    for beta_window, momentum_window in product(
+        range(beta_window_range[0], beta_window_range[1] + 1),
+        range(momentum_window_range[0], momentum_window_range[1] + 1)
+    ):
+        # Use your original function name
+        signal = generate_residual_momentum_factor(
+            asset_prices, market_prices,
+            beta_window=beta_window,
+            momentum_window=momentum_window
+        )
+        score = scoring_func(signal)
+        results.append({
+            'beta_window': beta_window,
+            'momentum_window': momentum_window,
+            'score': score
+        })
 
-    # Step 3: Calculate the daily idiosyncratic (residual) returns
-    residual_returns = asset_returns - (beta * market_returns)
-
-    # Step 4: Calculate momentum on the residual returns using the short 'momentum_window'.
-    # The sum of recent residual returns is a direct measure of the "coin-specific drift"
-    # mentioned in the research.
-    residual_momentum = residual_returns.rolling(window=momentum_window).sum()
-
-    return residual_momentum
+    return pd.DataFrame(results)
 
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
