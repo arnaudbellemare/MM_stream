@@ -175,17 +175,6 @@ def get_adx(high, low, close, window):
     dx = 100 * (abs(plus_di - minus_di) / (plus_di + minus_di))
     return dx.ewm(alpha=1/window, adjust=False).mean()
 
-def get_triple_barrier_labels(close, lookahead_periods=5, vol_mult=1.5):
-    returns = close.pct_change(); volatility = returns.rolling(20).std().fillna(method='bfill')
-    labels = pd.Series(0, index=close.index)
-    for i in range(len(close) - lookahead_periods):
-        entry = close.iloc[i]; vol = volatility.iloc[i]
-        if vol == 0: continue
-        tp = entry * (1 + vol_mult * vol); sl = entry * (1 - vol_mult * vol)
-        future = close.iloc[i+1 : i+1+lookahead_periods]
-        if (future >= tp).any(): labels.iloc[i] = 1
-        elif (future <= sl).any(): labels.iloc[i] = -1
-    return labels
 
 def rogers_satchell_volatility(data):
     log_ho=np.log(data["high"]/data["open"]); log_lo=np.log(data["low"]/data["open"]); log_co=np.log(data["close"]/data["open"])
@@ -287,45 +276,6 @@ def generate_residual_momentum_factor(
 # ==============================================================================
 # NEW HELPER FUNCTIONS FOR TAB 3
 # ==============================================================================
-def get_bollinger_bands(close, window=20, std_dev=2):
-    """Calculates Bollinger Bands."""
-    rolling_mean = close.rolling(window).mean()
-    rolling_std = close.rolling(window).std()
-    upper_band = rolling_mean + (rolling_std * std_dev)
-    lower_band = rolling_mean - (rolling_std * std_dev)
-    return upper_band, rolling_mean, lower_band
-
-def get_rsi(close, window=14):
-    """Calculates the Relative Strength Index (RSI)."""
-    delta = close.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-def get_ultosc(high, low, close, timeperiod1=7, timeperiod2=14, timeperiod3=28):
-    """Calculates the Ultimate Oscillator (ULTOSC)."""
-    true_range = pd.concat([high - low, abs(high - close.shift()), abs(low - close.shift())], axis=1).max(axis=1)
-    buying_pressure = close - pd.concat([low, close.shift()], axis=1).min(axis=1)
-    
-    avg1 = buying_pressure.rolling(timeperiod1).sum() / true_range.rolling(timeperiod1).sum()
-    avg2 = buying_pressure.rolling(timeperiod2).sum() / true_range.rolling(timeperiod2).sum()
-    avg3 = buying_pressure.rolling(timeperiod3).sum() / true_range.rolling(timeperiod3).sum()
-    
-    ultosc = 100 * (4 * avg1 + 2 * avg2 + avg3) / (4 + 2 + 1)
-    return ultosc
-
-def get_ema_crossovers(close):
-    """Calculates various EMA crossovers."""
-    ema_fast = close.ewm(span=12, adjust=False).mean()
-    ema_slow = close.ewm(span=26, adjust=False).mean()
-    ema_crossover = ema_fast - ema_slow  # This is the MACD line
-    return ema_crossover
-
-def get_zscore(series, window=30):
-    """Calculates the Z-score."""
-    return (series - series.rolling(window).mean()) / series.rolling(window).std()
 
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST (UPDATED)
@@ -334,13 +284,93 @@ with tab3:
     st.header("📈 Comprehensive Watchlist")
     st.markdown("""
     This powerful tool generates a unified watchlist by combining **AI-driven predictions** with **robust statistical analysis**.
-    - **MLP Signal & Confidence:** A unique neural network is trained for each asset to predict the next market move and its confidence.
+    - **MLP Signal & Confidence:** A unique neural network is trained for each asset using state-of-the-art methods. Features are made stationary using **Fractional Differencing** to preserve memory, and the model is optimized for **profitability**, not just accuracy, using a custom scorer with **GridSearchCV**.
     - **Statistical Metrics:** Includes rule-based momentum phase, wavelet-based performance, and residual momentum.
     """)
     st.sidebar.header("📈 Watchlist Configuration")
     min_volume_wl = st.sidebar.number_input("Minimum 24h Quote Volume", value=250000, key="wl_min_vol")
     data_limit_wl = st.sidebar.slider("Data Bars for Analysis", 500, 2000, 1500, key="wl_limit")
 
+    # ==============================================================================
+    # HELPER FUNCTIONS FOR TAB 3
+    # ==============================================================================
+    def get_bollinger_bands(close, window=20, std_dev=2):
+        rolling_mean = close.rolling(window).mean()
+        rolling_std = close.rolling(window).std()
+        upper_band = rolling_mean + (rolling_std * std_dev)
+        lower_band = rolling_mean - (rolling_std * std_dev)
+        return upper_band, rolling_mean, lower_band
+
+    def get_rsi(close, window=14):
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
+    def get_ultosc(high, low, close, timeperiod1=7, timeperiod2=14, timeperiod3=28):
+        true_range = pd.concat([high - low, abs(high - close.shift()), abs(low - close.shift())], axis=1).max(axis=1)
+        buying_pressure = close - pd.concat([low, close.shift()], axis=1).min(axis=1)
+        avg1 = buying_pressure.rolling(timeperiod1).sum() / true_range.rolling(timeperiod1).sum()
+        avg2 = buying_pressure.rolling(timeperiod2).sum() / true_range.rolling(timeperiod2).sum()
+        avg3 = buying_pressure.rolling(timeperiod3).sum() / true_range.rolling(timeperiod3).sum()
+        ultosc = 100 * (4 * avg1 + 2 * avg2 + avg3) / (4 + 2 + 1)
+        return ultosc
+
+    def get_ema_crossovers(close):
+        ema_fast = close.ewm(span=12, adjust=False).mean()
+        ema_slow = close.ewm(span=26, adjust=False).mean()
+        return ema_fast - ema_slow
+
+    def get_zscore(series, window=30):
+        return (series - series.rolling(window).mean()) / series.rolling(window).std()
+
+    # --- [NEW] HELPER FUNCTIONS FOR FRACTIONAL DIFFERENCING ---
+    def get_weights_ffd(d, thres):
+        w, k = [1.], 1
+        while True:
+            w_ = -w[-1] / k * (d - k + 1)
+            if abs(w_) < thres: break
+            w.append(w_)
+            k += 1
+        return np.array(w[::-1]).reshape(-1, 1)
+
+    def fractional_difference(series, d, thres=1e-5):
+        w = get_weights_ffd(d, thres)
+        width = len(w) - 1
+        series_padded = pd.Series(np.nan, index=series.index)
+        series_padded.iloc[width:] = series.iloc[width:]
+        df_ = series_padded.rolling(width + 1).apply(lambda x: np.dot(w.T, x)[0], raw=True)
+        return df_
+
+    def get_optimal_d(series, max_d=1.0, p_value_threshold=0.05):
+        series_dropna = series.dropna()
+        for d in np.linspace(0, max_d, 11):
+            diff_series = fractional_difference(series_dropna, d).dropna()
+            if len(diff_series) < 20 or np.var(diff_series) == 0: continue
+            p_value = adfuller(diff_series, maxlag=1, regression='c', autolag=None)[1]
+            if p_value <= p_value_threshold: return d
+        return max_d
+
+    # --- [MODIFIED] HELPER FUNCTION FOR TRIPLE-BARRIER LABELING ---
+    def get_triple_barrier_labels_and_vol(close, lookahead_periods=5, vol_mult=1.5):
+        returns = close.pct_change()
+        volatility = returns.rolling(20).std().fillna(method='bfill')
+        labels = pd.Series(0, index=close.index)
+        for i in range(len(close) - lookahead_periods):
+            entry, vol = close.iloc[i], volatility.iloc[i]
+            if vol == 0: continue
+            tp = entry * (1 + vol_mult * vol)
+            sl = entry * (1 - vol_mult * vol)
+            future = close.iloc[i+1 : i+1+lookahead_periods]
+            if (future >= tp).any(): labels.iloc[i] = 1
+            elif (future <= sl).any(): labels.iloc[i] = -1
+        return labels, volatility # Now returns volatility as well
+
+    # ==============================================================================
+    # MAIN WATCHLIST GENERATION FUNCTION (COMPLETELY OVERHAULED)
+    # ==============================================================================
     @st.cache_data(ttl=3600 * 2) # Cache results for 2 hours
     def generate_comprehensive_watchlist(symbols, timeframe, limit):
         st.info(f"Starting comprehensive analysis for {len(symbols)} tokens...")
@@ -354,64 +384,81 @@ with tab3:
         for i, symbol in enumerate(symbols):
             try:
                 df = fetch_data(symbol, timeframe, limit)
-                if df.empty or len(df) < 100: continue
+                if df.empty or len(df) < 200: continue
                 
                 df_mlp = df.copy()
                 
-                # --- START: INTEGRATE NEW FEATURES ---
-                
-                # 1. Bollinger Bands
-                df_mlp['bb_upper'], df_mlp['bb_middle'], df_mlp['bb_lower'] = get_bollinger_bands(df_mlp['close'])
+                # --- Feature Engineering (remains the same) ---
+                df_mlp['bb_upper'], _, df_mlp['bb_lower'] = get_bollinger_bands(df_mlp['close'])
                 df_mlp['bb_dist_upper'] = df_mlp['bb_upper'] - df_mlp['close']
                 df_mlp['bb_dist_lower'] = df_mlp['close'] - df_mlp['bb_lower']
-
-                # 2. RSI
                 df_mlp['rsi'] = get_rsi(df_mlp['close'])
-
-                # 3. Ultimate Oscillator (ULTOSC)
                 df_mlp['ultosc'] = get_ultosc(df_mlp['high'], df_mlp['low'], df_mlp['close'])
-                
-                # 4. EMA Crossovers (MACD line)
                 df_mlp['ema_crossover'] = get_ema_crossovers(df_mlp['close'])
-                
-                # 5. Z-Scores (Price and Volume)
                 df_mlp['price_zscore'] = get_zscore(df_mlp['close'])
-                df_mlp['volume_z'] = (df_mlp['volume'] - df_mlp['volume'].rolling(30).mean()) / df_mlp['volume'].rolling(30).std()
-
-                # --- END: INTEGRATE NEW FEATURES ---
-                
-                # Original features
+                df_mlp['volume_z'] = get_zscore(df_mlp['volume'])
                 df_mlp['ret_fast'] = df_mlp['close'].pct_change(7)
                 df_mlp['ret_slow'] = df_mlp['close'].pct_change(30)
                 df_mlp['volatility'] = df_mlp['close'].pct_change().rolling(20).std()
                 df_mlp['adx'] = get_adx(df_mlp['high'], df_mlp['low'], df_mlp['close'], 14)
 
-                # --- START: UPDATE THE FEATURE LIST FOR THE MODEL ---
-                
                 feature_columns = [
                     'ret_fast', 'ret_slow', 'volatility', 'adx', 'volume_z',
                     'bb_dist_upper', 'bb_dist_lower', 'rsi', 'ultosc', 
                     'ema_crossover', 'price_zscore'
                 ]
                 
-                features_df = df_mlp[feature_columns].dropna()
+                # --- [NEW] STEP 1: Stationarize Features using Fractional Differencing ---
+                features_df_stationarized = pd.DataFrame(index=df_mlp.index)
+                for col in feature_columns:
+                    optimal_d = get_optimal_d(df_mlp[col])
+                    features_df_stationarized[col] = fractional_difference(df_mlp[col], optimal_d)
                 
-                # --- END: UPDATE THE FEATURE LIST ---
+                features_df = features_df_stationarized.dropna()
+
+                # --- [MODIFIED] STEP 2: Get Labels AND Volatility ---
+                VOL_MULT_PARAM = 1.5
+                labels, volatility = get_triple_barrier_labels_and_vol(df_mlp['close'], lookahead_periods=5, vol_mult=VOL_MULT_PARAM)
+                
+                common_index = features_df.index.intersection(labels.index)
+                features_df = features_df.loc[common_index]
+                labels = labels.loc[common_index]
+                volatility = volatility.loc[common_index]
 
                 if len(features_df) < 50: continue
 
-                labels = get_triple_barrier_labels(df_mlp['close']).loc[features_df.index]
-                
-                pipeline = make_pipeline(StandardScaler(), MLPClassifier(hidden_layer_sizes=(32, 16), activation='relu', max_iter=500, random_state=42, early_stopping=True))
-                pipeline.fit(features_df, labels)
-                
+                # --- [NEW] STEP 3: Define a Custom Scorer Based on Profitability ---
+                def tbl_score_func(y_true, y_pred, vol_series, vol_mult):
+                    r_pt_sl = vol_series * vol_mult
+                    lambda_param = 20.0
+                    dcc_mask = (y_pred == y_true) & (y_true != 0)
+                    dic_mask = (y_pred != y_true) & (y_pred != 0) & (y_true != 0)
+                    tec_mask = (y_pred != 0) & (y_true == 0)
+                    score = np.sum(r_pt_sl[dcc_mask]) - np.sum(r_pt_sl[dic_mask]) - np.sum(r_pt_sl[tec_mask] / lambda_param)
+                    return score if np.isfinite(score) else -1e9
+
+                custom_scorer = make_scorer(tbl_score_func, greater_is_better=True, vol_series=volatility.values, vol_mult=VOL_MULT_PARAM)
+
+                # --- [MODIFIED] STEP 4: Use GridSearchCV for Model Selection ---
+                pipeline = make_pipeline(StandardScaler(), MLPClassifier(max_iter=500, random_state=42, early_stopping=True, activation='relu'))
+                param_grid = {
+                    'mlpclassifier__hidden_layer_sizes': [(32, 16), (64, 32)],
+                    'mlpclassifier__alpha': [0.0001, 0.001]
+                }
+                tscv = TimeSeriesSplit(n_splits=3)
+                grid_search = GridSearchCV(pipeline, param_grid, scoring=custom_scorer, cv=tscv, n_jobs=-1)
+                grid_search.fit(features_df, labels)
+                best_model = grid_search.best_estimator_
+
+                # --- [MODIFIED] STEP 5: Predict with the Best Found Model ---
                 latest_features = features_df.iloc[-1:]
-                pred_code = pipeline.predict(latest_features)[0]
-                pred_proba = pipeline.predict_proba(latest_features)[0].max()
+                pred_code = best_model.predict(latest_features)[0]
+                pred_proba = best_model.predict_proba(latest_features)[0].max()
                 signal_map = {1: "Buy", -1: "Sell", 0: "Hold"}
                 mlp_signal = signal_map.get(pred_code, "Hold")
                 confidence = pred_proba
                 
+                # --- The rest of the analysis remains the same ---
                 fast_ret = df['close'].iloc[-1] / df['close'].iloc[-8] - 1 if len(df) > 8 else 0
                 slow_ret = df['close'].iloc[-1] / df['close'].iloc[-31] - 1 if len(df) > 31 else 0
                 W_FAST = 1 if fast_ret >= 0 else -1; W_SLOW = 1 if slow_ret >= 0 else -1
@@ -431,10 +478,7 @@ with tab3:
                 df['log_ret'] = np.log(df['close']/df['close'].shift(1))
                 df['strat_ret'] = df['wv_label'].shift(1) * df['log_ret']
                 turnover = (df['wv_label'].shift(1) != df['wv_label']).astype(int).sum()
-
-                transaction_cost_bps = 20
-                total_cost = turnover * (transaction_cost_bps / 10000)
-                net_strat_ret = df['strat_ret'].sum() - total_cost
+                net_strat_ret = df['strat_ret'].sum() - (turnover * (20 / 10000))
                 net_bps = net_strat_ret * 10000
 
                 bull_bear_bias = df['wv_label'].mean()
@@ -448,11 +492,18 @@ with tab3:
                     'Token': symbol, 'MLP Signal': mlp_signal, 'Confidence': confidence, 'Market Phase': market_phase,
                     'Bull/Bear Bias': bull_bear_bias, 'Net BPS': net_bps, 'Wavelet Accuracy': accuracy, 'Residual Momentum': res_mom_score,
                 })
-            except Exception: continue
-            finally: progress_bar.progress((i + 1) / len(symbols), text=f"Analyzed {symbol}...")
+            except Exception as e:
+                st.warning(f"Could not analyze {symbol}. Error: {e}")
+                continue
+            finally:
+                progress_bar.progress((i + 1) / len(symbols), text=f"Analyzed {symbol}...")
         
-        progress_bar.empty(); return pd.DataFrame(results)
+        progress_bar.empty()
+        return pd.DataFrame(results)
 
+    # ==============================================================================
+    # UI AND PLOTTING (UNCHANGED)
+    # ==============================================================================
     if st.sidebar.button("📈 Run Comprehensive Analysis", key="run_wl"):
         watchlist_symbols = get_filtered_tickers(min_volume_wl)
         
@@ -496,44 +547,23 @@ with tab3:
                     st.info("No assets to display in the quadrant.")
                 else:
                     fig_quadrant = px.scatter(
-                        df_watchlist,
-                        x='Residual Momentum',
-                        y='Bull/Bear Bias',
-                        text='Token',
-                        color='Market Phase',
-                        color_discrete_map=phase_colors,
-                        hover_data={'Residual Momentum': ':.2f', 'Bull/Bear Bias': ':.2%'}
+                        df_watchlist, x='Residual Momentum', y='Bull/Bear Bias', text='Token', color='Market Phase',
+                        color_discrete_map=phase_colors, hover_data={'Residual Momentum': ':.2f', 'Bull/Bear Bias': ':.2%'}
                     )
-
                     fig_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey")
                     fig_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
-                    
                     fig_quadrant.add_annotation(text="<b>Leading Bulls</b><br>(Strong Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
                     fig_quadrant.add_annotation(text="<b>Lagging Bulls</b><br>(Strong Trend, Underperforming)", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
                     fig_quadrant.add_annotation(text="<b>Reversal Candidates</b><br>(Bear Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
                     fig_quadrant.add_annotation(text="<b>Lagging Bears</b><br>(Bear Trend, Underperforming)", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
-
                     fig_quadrant.add_annotation(
-                        text="<b>PERMUTATION RESEARCH ©</b>",
-                        xref="paper", yref="paper",
-                        x=0.5, y=0.5,
-                        showarrow=False,
-                        font=dict(
-                            size=72,
-                            color="rgba(220, 220, 220, 0.2)"
-                        ),
-                        align="center"
+                        text="<b>PERMUTATION RESEARCH ©</b>", xref="paper", yref="paper", x=0.5, y=0.5,
+                        showarrow=False, font=dict(size=72, color="rgba(220, 220, 220, 0.2)"), align="center"
                     )
-
                     fig_quadrant.update_traces(textposition='top center', textfont_size=10)
                     fig_quadrant.update_yaxes(title_text="Bull/Bear Bias (Long-Term Trend)", zeroline=False, tickformat=".0%")
                     fig_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
-                    fig_quadrant.update_layout(
-                        title_text="Bull/Bear Bias vs. Residual Momentum",
-                        height=500,
-                        legend_title="Market Phase"
-                    )
-
+                    fig_quadrant.update_layout(title_text="Bull/Bear Bias vs. Residual Momentum", height=500, legend_title="Market Phase")
                     st.plotly_chart(fig_quadrant, use_container_width=True)
 
 # ==============================================================================
