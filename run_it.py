@@ -340,24 +340,27 @@ with tab3:
 
     def fractional_difference(series, d, thres=1e-5):
 
-    # 1. Get weights
+    # 1. Get weights and calculate the required window size (`width`)
         w = get_weights_ffd(d, thres)
-        width = len(w) - 1
-    
+        width = len(w)
+
     # 2. Work on a clean, NaN-free version of the series
         series_clean = series.dropna()
-        if series_clean.empty:
-            return pd.Series(index=series.index) # Return empty series if all data was NaN
 
-    # 3. Pad the start of the clean series with NaNs for the rolling window
-        series_padded = pd.Series(np.nan, index=series_clean.index)
-        series_padded.iloc[width:] = series_clean.iloc[width:] # This assignment is now safe
-    
-    # 4. Apply the rolling calculation on the padded, clean series
-        df_ = series_padded.rolling(width + 1).apply(lambda x: np.dot(w.T, x)[0], raw=True)
-    
-    # 5. [CRITICAL FIX] Reindex the result to match the original input series's index.
-    # This ensures any NaNs from the original input are preserved in their correct locations.
+    # 3. [CRITICAL GUARD CLAUSE]
+    # If the number of valid data points is less than the required window size,
+    # we cannot perform the operation. Return an empty series with the original index.
+    # This prevents crashes on assets with short histories.
+        if len(series_clean) < width:
+            return pd.Series(index=series.index)
+
+    # 4. The operation is safe to proceed. Use a direct rolling apply which is safer.
+    # The `min_periods=width` ensures the function is only applied to full windows.
+        df_ = series_clean.rolling(window=width, min_periods=width).apply(lambda x: np.dot(w.T, x)[0], raw=True)
+
+    # 5. [CRITICAL REINDEX] Reindex the result to match the original input series's index.
+    # This ensures any NaNs from the original input are preserved in their correct locations
+    # and restores the original shape of the data, guaranteeing alignment.
         return df_.reindex(series.index)
 
     def get_optimal_d(series, max_d=1.0, p_value_threshold=0.05):
