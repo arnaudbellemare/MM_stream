@@ -12,6 +12,6 @@ streamlit
 
 # For Wavelet Denoising
 PyWavelets
-
+statsmodels
 # For chart date formatting in Matplotlib
 matplotlib
