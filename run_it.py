@@ -339,12 +339,33 @@ with tab3:
         return np.array(w[::-1]).reshape(-1, 1)
 
     def fractional_difference(series, d, thres=1e-5):
+    """
+    Applies fractional differencing to a time series.
+    
+    [MODIFIED FOR ROBUSTNESS]
+    - Handles internal NaNs by working on a clean version of the series.
+    - Reindexes the final output to match the original series's index,
+      preventing any downstream alignment errors.
+    """
+    # 1. Get weights
         w = get_weights_ffd(d, thres)
         width = len(w) - 1
-        series_padded = pd.Series(np.nan, index=series.index)
-        series_padded.iloc[width:] = series.iloc[width:]
+    
+    # 2. Work on a clean, NaN-free version of the series
+        series_clean = series.dropna()
+        if series_clean.empty:
+            return pd.Series(index=series.index) # Return empty series if all data was NaN
+
+    # 3. Pad the start of the clean series with NaNs for the rolling window
+        series_padded = pd.Series(np.nan, index=series_clean.index)
+        series_padded.iloc[width:] = series_clean.iloc[width:] # This assignment is now safe
+    
+    # 4. Apply the rolling calculation on the padded, clean series
         df_ = series_padded.rolling(width + 1).apply(lambda x: np.dot(w.T, x)[0], raw=True)
-        return df_
+    
+    # 5. [CRITICAL FIX] Reindex the result to match the original input series's index.
+    # This ensures any NaNs from the original input are preserved in their correct locations.
+        return df_.reindex(series.index)
 
     def get_optimal_d(series, max_d=1.0, p_value_threshold=0.05):
         series_dropna = series.dropna()
