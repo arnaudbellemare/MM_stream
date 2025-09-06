@@ -339,14 +339,7 @@ with tab3:
         return np.array(w[::-1]).reshape(-1, 1)
 
     def fractional_difference(series, d, thres=1e-5):
-    """
-    Applies fractional differencing to a time series.
-    
-    [MODIFIED FOR ROBUSTNESS]
-    - Handles internal NaNs by working on a clean version of the series.
-    - Reindexes the final output to match the original series's index,
-      preventing any downstream alignment errors.
-    """
+
     # 1. Get weights
         w = get_weights_ffd(d, thres)
         width = len(w) - 1
