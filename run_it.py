@@ -204,6 +204,26 @@ def auto_labeling(data, w):
     labels[FP_N:]=Cid
     return labels
 
+def _calculate_residual_momentum(asset_prices, market_prices, beta_window, momentum_window):
+    """Helper to calculate residual momentum for a single parameter set."""
+    # Calculate returns
+    asset_returns = np.log(asset_prices / asset_prices.shift(1))
+    market_returns = np.log(market_prices / market_prices.shift(1))
+    
+    # Rolling beta calculation
+    rolling_cov = asset_returns.rolling(window=beta_window).cov(market_returns)
+    rolling_var = market_returns.rolling(window=beta_window).var()
+    beta = rolling_cov / rolling_var
+    
+    # Residual returns
+    residual_returns = asset_returns - beta * market_returns
+    
+    # Momentum of residuals
+    residual_momentum = residual_returns.rolling(window=momentum_window).mean()
+    
+    return (residual_momentum / residual_returns.rolling(window=momentum_window).std()).shift(1)
+
+
 def generate_residual_momentum_factor(
     asset_prices: pd.Series,
     market_prices: pd.Series,
@@ -213,42 +233,49 @@ def generate_residual_momentum_factor(
 ):
     """
     Grid search for optimal beta_window and momentum_window for residual momentum.
-
-    Args:
-        asset_prices (pd.Series): Asset close prices.
-        market_prices (pd.Series): Market (e.g., BTC) close prices.
-        beta_window_range (tuple): (min, max) for beta_window (inclusive).
-        momentum_window_range (tuple): (min, max) for momentum_window (inclusive).
-        scoring_func (callable): Function to score the signal (default: mean return / std).
-
-    Returns:
-        pd.DataFrame: Results with columns ['beta_window', 'momentum_window', 'score'].
     """
     if scoring_func is None:
-        # Default: Sharpe ratio of the signal (ignoring transaction costs)
         def scoring_func(signal):
             returns = signal.shift(1) * np.log(asset_prices / asset_prices.shift(1))
+            # Handle potential NaNs or Infs
+            returns = returns.replace([np.inf, -np.inf], np.nan).dropna()
+            if returns.std() == 0 or len(returns) == 0:
+                return 0
             return returns.mean() / returns.std()
 
     results = []
-    for beta_window, momentum_window in product(
-        range(beta_window_range[0], beta_window_range[1] + 1),
-        range(momentum_window_range[0], momentum_window_range[1] + 1)
-    ):
-        # Use your original function name
-        signal = generate_residual_momentum_factor(
-            asset_prices, market_prices,
-            beta_window=beta_window,
-            momentum_window=momentum_window
-        )
-        score = scoring_func(signal)
-        results.append({
-            'beta_window': beta_window,
-            'momentum_window': momentum_window,
-            'score': score
-        })
+    # Using a simplified grid for performance in a web app context
+    beta_steps = np.linspace(beta_window_range[0], beta_window_range[1], 5, dtype=int)
+    momentum_steps = np.linspace(momentum_window_range[0], momentum_window_range[1], 5, dtype=int)
 
-    return pd.DataFrame(results)
+    for beta_window in beta_steps:
+        for momentum_window in momentum_steps:
+            signal = _calculate_residual_momentum(
+                asset_prices, market_prices,
+                beta_window=beta_window,
+                momentum_window=momentum_window
+            )
+            score = scoring_func(signal)
+            results.append({
+                'beta_window': beta_window,
+                'momentum_window': momentum_window,
+                'score': score
+            })
+
+    results_df = pd.DataFrame(results)
+    if results_df.empty or results_df['score'].isnull().all():
+        return pd.Series(0, index=asset_prices.index)
+        
+    best_params = results_df.loc[results_df['score'].idxmax()]
+    
+    # Recalculate with best params to return the final signal series
+    final_signal = _calculate_residual_momentum(
+        asset_prices, 
+        market_prices, 
+        beta_window=int(best_params['beta_window']), 
+        momentum_window=int(best_params['momentum_window'])
+    )
+    return final_signal
 
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
@@ -257,7 +284,52 @@ def generate_residual_momentum_factor(
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
 # ==============================================================================
-# TAB 3: COMPREHENSIVE WATCHLIST
+# ==============================================================================
+# NEW HELPER FUNCTIONS FOR TAB 3
+# ==============================================================================
+def get_bollinger_bands(close, window=20, std_dev=2):
+    """Calculates Bollinger Bands."""
+    rolling_mean = close.rolling(window).mean()
+    rolling_std = close.rolling(window).std()
+    upper_band = rolling_mean + (rolling_std * std_dev)
+    lower_band = rolling_mean - (rolling_std * std_dev)
+    return upper_band, rolling_mean, lower_band
+
+def get_rsi(close, window=14):
+    """Calculates the Relative Strength Index (RSI)."""
+    delta = close.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def get_ultosc(high, low, close, timeperiod1=7, timeperiod2=14, timeperiod3=28):
+    """Calculates the Ultimate Oscillator (ULTOSC)."""
+    true_range = pd.concat([high - low, abs(high - close.shift()), abs(low - close.shift())], axis=1).max(axis=1)
+    buying_pressure = close - pd.concat([low, close.shift()], axis=1).min(axis=1)
+    
+    avg1 = buying_pressure.rolling(timeperiod1).sum() / true_range.rolling(timeperiod1).sum()
+    avg2 = buying_pressure.rolling(timeperiod2).sum() / true_range.rolling(timeperiod2).sum()
+    avg3 = buying_pressure.rolling(timeperiod3).sum() / true_range.rolling(timeperiod3).sum()
+    
+    ultosc = 100 * (4 * avg1 + 2 * avg2 + avg3) / (4 + 2 + 1)
+    return ultosc
+
+def get_ema_crossovers(close):
+    """Calculates various EMA crossovers."""
+    ema_fast = close.ewm(span=12, adjust=False).mean()
+    ema_slow = close.ewm(span=26, adjust=False).mean()
+    ema_crossover = ema_fast - ema_slow  # This is the MACD line
+    return ema_crossover
+
+def get_zscore(series, window=30):
+    """Calculates the Z-score."""
+    return (series - series.rolling(window).mean()) / series.rolling(window).std()
+
+# ==============================================================================
+# TAB 3: COMPREHENSIVE WATCHLIST (UPDATED)
+# ==============================================================================
 with tab3:
     st.header("📈 Comprehensive Watchlist")
     st.markdown("""
@@ -285,13 +357,47 @@ with tab3:
                 if df.empty or len(df) < 100: continue
                 
                 df_mlp = df.copy()
+                
+                # --- START: INTEGRATE NEW FEATURES ---
+                
+                # 1. Bollinger Bands
+                df_mlp['bb_upper'], df_mlp['bb_middle'], df_mlp['bb_lower'] = get_bollinger_bands(df_mlp['close'])
+                df_mlp['bb_dist_upper'] = df_mlp['bb_upper'] - df_mlp['close']
+                df_mlp['bb_dist_lower'] = df_mlp['close'] - df_mlp['bb_lower']
+
+                # 2. RSI
+                df_mlp['rsi'] = get_rsi(df_mlp['close'])
+
+                # 3. Ultimate Oscillator (ULTOSC)
+                df_mlp['ultosc'] = get_ultosc(df_mlp['high'], df_mlp['low'], df_mlp['close'])
+                
+                # 4. EMA Crossovers (MACD line)
+                df_mlp['ema_crossover'] = get_ema_crossovers(df_mlp['close'])
+                
+                # 5. Z-Scores (Price and Volume)
+                df_mlp['price_zscore'] = get_zscore(df_mlp['close'])
+                df_mlp['volume_z'] = (df_mlp['volume'] - df_mlp['volume'].rolling(30).mean()) / df_mlp['volume'].rolling(30).std()
+
+                # --- END: INTEGRATE NEW FEATURES ---
+                
+                # Original features
                 df_mlp['ret_fast'] = df_mlp['close'].pct_change(7)
                 df_mlp['ret_slow'] = df_mlp['close'].pct_change(30)
                 df_mlp['volatility'] = df_mlp['close'].pct_change().rolling(20).std()
                 df_mlp['adx'] = get_adx(df_mlp['high'], df_mlp['low'], df_mlp['close'], 14)
-                df_mlp['volume_z'] = (df_mlp['volume']-df_mlp['volume'].rolling(30).mean())/df_mlp['volume'].rolling(30).std()
+
+                # --- START: UPDATE THE FEATURE LIST FOR THE MODEL ---
                 
-                features_df = df_mlp[['ret_fast', 'ret_slow', 'volatility', 'adx', 'volume_z']].dropna()
+                feature_columns = [
+                    'ret_fast', 'ret_slow', 'volatility', 'adx', 'volume_z',
+                    'bb_dist_upper', 'bb_dist_lower', 'rsi', 'ultosc', 
+                    'ema_crossover', 'price_zscore'
+                ]
+                
+                features_df = df_mlp[feature_columns].dropna()
+                
+                # --- END: UPDATE THE FEATURE LIST ---
+
                 if len(features_df) < 50: continue
 
                 labels = get_triple_barrier_labels(df_mlp['close']).loc[features_df.index]
@@ -324,14 +430,10 @@ with tab3:
                 df['wv_label'] = wv_labels
                 df['log_ret'] = np.log(df['close']/df['close'].shift(1))
                 df['strat_ret'] = df['wv_label'].shift(1) * df['log_ret']
-# Calculate turnover: number of times the signal changes (from 1 to -1 or vice versa)
                 turnover = (df['wv_label'].shift(1) != df['wv_label']).astype(int).sum()
 
-# Assume transaction_cost_bps per trade (e.g., 20 bps round-trip)
                 transaction_cost_bps = 20
                 total_cost = turnover * (transaction_cost_bps / 10000)
-
-# Net strategy return after costs
                 net_strat_ret = df['strat_ret'].sum() - total_cost
                 net_bps = net_strat_ret * 10000
 
@@ -339,8 +441,8 @@ with tab3:
                 gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0)
                 accuracy = accuracy_score(gt, df['wv_label'])
                 
-                res_mom = generate_residual_momentum_factor(df['close'], market_df['close'])
-                res_mom_score = res_mom.iloc[-1] if not res_mom.empty and pd.notna(res_mom.iloc[-1]) else 0.0
+                res_mom_signal = generate_residual_momentum_factor(df['close'], market_df['close'])
+                res_mom_score = res_mom_signal.iloc[-1] if not res_mom_signal.empty and pd.notna(res_mom_signal.iloc[-1]) else 0.0
 
                 results.append({
                     'Token': symbol, 'MLP Signal': mlp_signal, 'Confidence': confidence, 'Market Phase': market_phase,
@@ -411,19 +513,17 @@ with tab3:
                     fig_quadrant.add_annotation(text="<b>Reversal Candidates</b><br>(Bear Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
                     fig_quadrant.add_annotation(text="<b>Lagging Bears</b><br>(Bear Trend, Underperforming)", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
 
-                    # --- NEW: BACKGROUND WATERMARK ANNOTATION ---
                     fig_quadrant.add_annotation(
                         text="<b>PERMUTATION RESEARCH ©</b>",
                         xref="paper", yref="paper",
-                        x=0.5, y=0.5,  # Center of the chart
+                        x=0.5, y=0.5,
                         showarrow=False,
                         font=dict(
                             size=72,
-                            color="rgba(220, 220, 220, 0.2)" # Very light gray, semi-transparent
+                            color="rgba(220, 220, 220, 0.2)"
                         ),
                         align="center"
                     )
-                    # --- END OF NEW CODE ---
 
                     fig_quadrant.update_traces(textposition='top center', textfont_size=10)
                     fig_quadrant.update_yaxes(title_text="Bull/Bear Bias (Long-Term Trend)", zeroline=False, tickformat=".0%")
