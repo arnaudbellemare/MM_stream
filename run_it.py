@@ -20,9 +20,8 @@ from statsmodels.tsa.stattools import adfuller
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 import tensorflow as tf
 from tensorflow import keras
-from keras.models import Model
-from keras.layers import Input, Dense
-from keras.optimizers import Adam
+from keras.models import Model, Sequential
+from keras.layers import Input, Dense, Bidirectional, LSTM
 from sklearn.metrics import make_scorer
 warnings.filterwarnings('ignore')
 
@@ -132,7 +131,7 @@ with tab1:
                     # Plotting function for backtest results...
                     # (This function remains as it was)
 
-# ==============================================================================
+==============================================================================
 # TAB 2: SG SWING ANALYSIS (Unchanged)
 # ==============================================================================
 with tab2:
@@ -182,33 +181,23 @@ def get_adx(high, low, close, window):
     dx = 100 * (abs(plus_di - minus_di) / (plus_di + minus_di))
     return dx.ewm(alpha=1/window, adjust=False).mean()
 
-# ==============================================================================
-# [NEW] HELPER FUNCTION TO BUILD THE AUTOENCODER MODEL
-# ==============================================================================
 def create_autoencoder(input_dim, encoding_dim=8):
     """
     Creates a Keras Autoencoder model and a standalone Encoder model.
     """
     # --- Encoder Architecture ---
     input_layer = Input(shape=(input_dim,))
-    # You can add more layers here for a deeper autoencoder
-    encoded = Dense(encoding_dim, activation='relu')(input_layer) # This is the "bottleneck"
+    encoded = Dense(encoding_dim, activation='relu')(input_layer)
 
     # --- Decoder Architecture ---
-    # You can add more layers here for a deeper decoder
-    decoded = Dense(input_dim, activation='sigmoid')(encoded) # Reconstructs the original input
+    decoded = Dense(input_dim, activation='sigmoid')(encoded)
 
     # --- Model Definitions ---
-    # 1. The full Autoencoder model (trains both encoder and decoder)
     autoencoder = Model(input_layer, decoded)
-    
-    # 2. The standalone Encoder model (used for transforming data after training)
     encoder = Model(input_layer, encoded)
-
-    # Compile the Autoencoder
     autoencoder.compile(optimizer='adam', loss='mean_squared_error')
-    
     return autoencoder, encoder
+
 def rogers_satchell_volatility(data):
     log_ho=np.log(data["high"]/data["open"]); log_lo=np.log(data["low"]/data["open"]); log_co=np.log(data["close"]/data["open"])
     return np.sqrt(np.mean(log_ho*(log_ho-log_co)+log_lo*(log_lo-log_co)))
@@ -227,97 +216,43 @@ def auto_labeling(data, w):
     return labels
 
 def _calculate_residual_momentum(asset_prices, market_prices, beta_window, momentum_window):
-    """Helper to calculate residual momentum for a single parameter set."""
-    # Calculate returns
     asset_returns = np.log(asset_prices / asset_prices.shift(1))
     market_returns = np.log(market_prices / market_prices.shift(1))
-    
-    # Rolling beta calculation
     rolling_cov = asset_returns.rolling(window=beta_window).cov(market_returns)
     rolling_var = market_returns.rolling(window=beta_window).var()
     beta = rolling_cov / rolling_var
-    
-    # Residual returns
     residual_returns = asset_returns - beta * market_returns
-    
-    # Momentum of residuals
     residual_momentum = residual_returns.rolling(window=momentum_window).mean()
-    
     return (residual_momentum / residual_returns.rolling(window=momentum_window).std()).shift(1)
 
-
-def generate_residual_momentum_factor(
-    asset_prices: pd.Series,
-    market_prices: pd.Series,
-    beta_window_range=(90, 180),
-    momentum_window_range=(7, 20),
-    scoring_func=None
-):
-    """
-    Grid search for optimal beta_window and momentum_window for residual momentum.
-    """
-    if scoring_func is None:
-        def scoring_func(signal):
-            returns = signal.shift(1) * np.log(asset_prices / asset_prices.shift(1))
-            # Handle potential NaNs or Infs
-            returns = returns.replace([np.inf, -np.inf], np.nan).dropna()
-            if returns.std() == 0 or len(returns) == 0:
-                return 0
-            return returns.mean() / returns.std()
-
+def generate_residual_momentum_factor(asset_prices: pd.Series, market_prices: pd.Series, beta_window_range=(90, 180), momentum_window_range=(7, 20)):
+    def scoring_func(signal):
+        returns = signal.shift(1) * np.log(asset_prices / asset_prices.shift(1))
+        returns = returns.replace([np.inf, -np.inf], np.nan).dropna()
+        if returns.std() == 0 or len(returns) == 0: return 0
+        return returns.mean() / returns.std()
     results = []
-    # Using a simplified grid for performance in a web app context
     beta_steps = np.linspace(beta_window_range[0], beta_window_range[1], 5, dtype=int)
     momentum_steps = np.linspace(momentum_window_range[0], momentum_window_range[1], 5, dtype=int)
-
     for beta_window in beta_steps:
         for momentum_window in momentum_steps:
-            signal = _calculate_residual_momentum(
-                asset_prices, market_prices,
-                beta_window=beta_window,
-                momentum_window=momentum_window
-            )
+            signal = _calculate_residual_momentum(asset_prices, market_prices, beta_window=beta_window, momentum_window=momentum_window)
             score = scoring_func(signal)
-            results.append({
-                'beta_window': beta_window,
-                'momentum_window': momentum_window,
-                'score': score
-            })
-
+            results.append({'beta_window': beta_window, 'momentum_window': momentum_window, 'score': score})
     results_df = pd.DataFrame(results)
-    if results_df.empty or results_df['score'].isnull().all():
-        return pd.Series(0, index=asset_prices.index)
-        
+    if results_df.empty or results_df['score'].isnull().all(): return pd.Series(0, index=asset_prices.index)
     best_params = results_df.loc[results_df['score'].idxmax()]
-    
-    # Recalculate with best params to return the final signal series
-    final_signal = _calculate_residual_momentum(
-        asset_prices, 
-        market_prices, 
-        beta_window=int(best_params['beta_window']), 
-        momentum_window=int(best_params['momentum_window'])
-    )
+    final_signal = _calculate_residual_momentum(asset_prices, market_prices, beta_window=int(best_params['beta_window']), momentum_window=int(best_params['momentum_window']))
     return final_signal
 
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
-# ==============================================================================
-# TAB 3: COMPREHENSIVE WATCHLIST
-# ==============================================================================
-# ==============================================================================
-# ==============================================================================
-# NEW HELPER FUNCTIONS FOR TAB 3
-# ==============================================================================
-
-# ==============================================================================
-# TAB 3: COMPREHENSIVE WATCHLIST (UPDATED)
-# ==============================================================================
 with tab3:
     st.header("📈 Comprehensive Watchlist")
     st.markdown("""
     This powerful tool generates a unified watchlist by combining **AI-driven predictions** with **robust statistical analysis**.
-    - **MLP Signal & Confidence:** A unique neural network is trained for each asset using state-of-the-art methods. Features are made stationary using **Fractional Differencing** to preserve memory, and the model is optimized for **profitability**, not just accuracy, using a custom scorer with **GridSearchCV**.
+    - **BiLSTM Signal & Confidence:** A unique Bidirectional LSTM network is trained for each asset. This advanced recurrent neural network is designed to capture complex temporal patterns from both past and future directions in the feature data. Features are made stationary using **Fractional Differencing** to preserve memory, and denoised with an **Autoencoder**.
     - **Statistical Metrics:** Includes rule-based momentum phase, wavelet-based performance, and residual momentum.
     """)
     st.sidebar.header("📈 Watchlist Configuration")
@@ -359,7 +294,6 @@ with tab3:
     def get_zscore(series, window=30):
         return (series - series.rolling(window).mean()) / series.rolling(window).std()
 
-    # --- [NEW] HELPER FUNCTIONS FOR FRACTIONAL DIFFERENCING ---
     def get_weights_ffd(d, thres):
         w, k = [1.], 1
         while True:
@@ -370,28 +304,10 @@ with tab3:
         return np.array(w[::-1]).reshape(-1, 1)
 
     def fractional_difference(series, d, thres=1e-5):
-
-    # 1. Get weights and calculate the required window size (`width`)
-        w = get_weights_ffd(d, thres)
-        width = len(w)
-
-    # 2. Work on a clean, NaN-free version of the series
+        w = get_weights_ffd(d, thres); width = len(w)
         series_clean = series.dropna()
-
-    # 3. [CRITICAL GUARD CLAUSE]
-    # If the number of valid data points is less than the required window size,
-    # we cannot perform the operation. Return an empty series with the original index.
-    # This prevents crashes on assets with short histories.
-        if len(series_clean) < width:
-            return pd.Series(index=series.index)
-
-    # 4. The operation is safe to proceed. Use a direct rolling apply which is safer.
-    # The `min_periods=width` ensures the function is only applied to full windows.
+        if len(series_clean) < width: return pd.Series(index=series.index)
         df_ = series_clean.rolling(window=width, min_periods=width).apply(lambda x: np.dot(w.T, x)[0], raw=True)
-
-    # 5. [CRITICAL REINDEX] Reindex the result to match the original input series's index.
-    # This ensures any NaNs from the original input are preserved in their correct locations
-    # and restores the original shape of the data, guaranteeing alignment.
         return df_.reindex(series.index)
 
     def get_optimal_d(series, max_d=1.0, p_value_threshold=0.05):
@@ -403,112 +319,69 @@ with tab3:
             if p_value <= p_value_threshold: return d
         return max_d
 
-    # --- [MODIFIED] HELPER FUNCTION FOR TRIPLE-BARRIER LABELING ---
-# ==============================================================================
-# [UPGRADED] HELPER FUNCTION FOR TRIPLE-BARRIER LABELING (Using High/Low Prices)
-# ==============================================================================
-    # ==============================================================================
-    # [UPGRADED & CORRECTLY INDENTED] HELPER FUNCTION FOR TRIPLE-BARRIER LABELING
-    # ==============================================================================
     def get_triple_barrier_labels_and_vol(high, low, close, lookahead_periods=5, vol_mult=1.5):
-        """
-        Generates triple-barrier labels and volatility.
-
-        This upgraded version checks against future HIGH prices for profit-take
-        and future LOW prices for stop-loss, providing a more realistic labeling
-        that accounts for intraday price action.
-        """
-        # 1. Calculate volatility based on close-to-close returns (this is standard)
         returns = close.pct_change()
         volatility = returns.rolling(20).std().fillna(method='bfill')
         labels = pd.Series(0, index=close.index)
-
-        # 2. Iterate through each time step to generate labels
         for i in range(len(close) - lookahead_periods):
-            entry_price = close.iloc[i]
-            vol = volatility.iloc[i]
-            
-            # Skip if volatility is zero to avoid division errors
+            entry_price = close.iloc[i]; vol = volatility.iloc[i]
             if vol == 0: continue
-
-            # 3. Set the dynamic profit-take and stop-loss barriers
-            tp_level = entry_price * (1 + vol_mult * vol)
-            sl_level = entry_price * (1 - vol_mult * vol)
-
-            # 4. Get the high and low prices for the future lookahead window
-            future_highs = high.iloc[i+1 : i+1+lookahead_periods]
-            future_lows = low.iloc[i+1 : i+1+lookahead_periods]
-
-            # 5. Determine the time (number of bars) until each barrier is first hit
-            try:
-                # Find the first index where a future high touches the take-profit level
-                first_tp_hit = (future_highs >= tp_level).to_list().index(True)
-            except ValueError:
-                first_tp_hit = None # Barrier was not hit in the window
-
-            try:
-                # Find the first index where a future low touches the stop-loss level
-                first_sl_hit = (future_lows <= sl_level).to_list().index(True)
-            except ValueError:
-                first_sl_hit = None # Barrier was not hit in the window
-            
-            # 6. Assign labels based on which barrier (if any) was hit FIRST
+            tp_level = entry_price * (1 + vol_mult * vol); sl_level = entry_price * (1 - vol_mult * vol)
+            future_highs = high.iloc[i+1 : i+1+lookahead_periods]; future_lows = low.iloc[i+1 : i+1+lookahead_periods]
+            try: first_tp_hit = (future_highs >= tp_level).to_list().index(True)
+            except ValueError: first_tp_hit = None
+            try: first_sl_hit = (future_lows <= sl_level).to_list().index(True)
+            except ValueError: first_sl_hit = None
             if first_tp_hit is not None and first_sl_hit is not None:
-                # Both barriers were hit, determine which came first
-                if first_tp_hit < first_sl_hit:
-                    labels.iloc[i] = 1 # Take-profit was hit first
-                elif first_sl_hit < first_tp_hit:
-                    labels.iloc[i] = -1 # Stop-loss was hit first
-                else:
-                    # Barriers were hit on the same day, an ambiguous case
-                    labels.iloc[i] = 0
-            elif first_tp_hit is not None:
-                # Only the take-profit barrier was hit
-                labels.iloc[i] = 1
-            elif first_sl_hit is not None:
-                # Only the stop-loss barrier was hit
-                labels.iloc[i] = -1
-            # If neither was hit, the label correctly remains 0 (time barrier)
-                
+                if first_tp_hit < first_sl_hit: labels.iloc[i] = 1
+                elif first_sl_hit < first_tp_hit: labels.iloc[i] = -1
+                else: labels.iloc[i] = 0
+            elif first_tp_hit is not None: labels.iloc[i] = 1
+            elif first_sl_hit is not None: labels.iloc[i] = -1
         return labels, volatility
 
     # ==============================================================================
-    # MAIN WATCHLIST GENERATION FUNCTION (COMPLETELY OVERHAULED)
+    # [NEW] HELPER FUNCTIONS FOR BiLSTM MODEL
     # ==============================================================================
-    # ==============================================================================
-    # FULL AND COMPLETE generate_comprehensive_watchlist FUNCTION WITH AUTOENCODER
-    # [CORRECTLY INDENTED FOR PLACEMENT WITHIN 'with tab3:']
-    # ==============================================================================
+    def create_sequences(features, labels, time_steps=10):
+        """Creates sequences for LSTM model input."""
+        X, y = [], []
+        for i in range(len(features) - time_steps):
+            v = features.iloc[i:(i + time_steps)].values
+            X.append(v)
+            y.append(labels.iloc[i + time_steps])
+        return np.array(X), np.array(y)
 
+    def create_bilstm_model(input_shape, num_classes):
+        """Builds and compiles a Bidirectional LSTM model."""
+        model = Sequential([
+            Input(shape=input_shape),
+            Bidirectional(LSTM(units=32, return_sequences=False)),
+            Dense(16, activation='relu'),
+            Dense(num_classes, activation='softmax')
+        ])
+        model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+        return model
+
+    # ==============================================================================
+    # MAIN WATCHLIST GENERATION FUNCTION (NOW WITH BiLSTM)
+    # ==============================================================================
     @st.cache_data(ttl=3600 * 2)
     def generate_comprehensive_watchlist(symbols, timeframe, limit):
         st.info(f"Starting comprehensive analysis for {len(symbols)} tokens...")
         results = []
         progress_bar = st.progress(0, text="Initializing analysis...")
-        import tensorflow as tf
-        from tensorflow import keras
-        from keras.models import Model
-        from keras.layers import Input, Dense
         market_df = fetch_data('BTC/USD', timeframe, limit)
         if market_df.empty:
             st.error("Could not fetch market data (BTC/USD). Cannot proceed."); return pd.DataFrame()
-
-        def create_autoencoder(input_dim, encoding_dim=8):
-            input_layer = Input(shape=(input_dim,))
-            encoded = Dense(encoding_dim, activation='relu', kernel_initializer='he_uniform')(input_layer)
-            decoded = Dense(input_dim, activation='sigmoid')(encoded)
-            autoencoder = Model(input_layer, decoded, name="Autoencoder")
-            encoder = Model(input_layer, encoded, name="Encoder")
-            autoencoder.compile(optimizer='adam', loss='mean_squared_error')
-            return autoencoder, encoder
 
         for i, symbol in enumerate(symbols):
             try:
                 df = fetch_data(symbol, timeframe, limit)
                 if df.empty or len(df) < 200: continue
-                df_mlp = df.copy()
-
+                
                 # --- 1. RAW FEATURE ENGINEERING ---
+                df_mlp = df.copy()
                 df_mlp['bb_upper'], _, df_mlp['bb_lower'] = get_bollinger_bands(df_mlp['close'])
                 df_mlp['bb_dist_upper'] = df_mlp['bb_upper'] - df_mlp['close']
                 df_mlp['bb_dist_lower'] = df_mlp['close'] - df_mlp['bb_lower']
@@ -521,74 +394,70 @@ with tab3:
                 df_mlp['ret_slow'] = df_mlp['close'].pct_change(30)
                 df_mlp['volatility'] = df_mlp['close'].pct_change().rolling(20).std()
                 df_mlp['adx'] = get_adx(df_mlp['high'], df_mlp['low'], df_mlp['close'], 14)
-
-                # --- 2. [NEW] MARKET PHASE FEATURE ENGINEERING ---
-                w_fast = np.sign(df_mlp['ret_fast'])
-                w_slow = np.sign(df_mlp['ret_slow'])
+                w_fast = np.sign(df_mlp['ret_fast']); w_slow = np.sign(df_mlp['ret_slow'])
                 conditions = [(w_slow == 1) & (w_fast == 1), (w_slow == -1) & (w_fast == -1), (w_slow == 1) & (w_fast == -1)]
                 choices = ['Bull', 'Bear', 'Correction']
                 df_mlp['market_phase_cat'] = np.select(conditions, choices, default='Rebound')
                 market_phase_dummies = pd.get_dummies(df_mlp['market_phase_cat'], prefix='phase')
 
-                # --- 3. FRACTIONAL DIFFERENCING (on continuous features) ---
+                # --- 2. FRACTIONAL DIFFERENCING ---
                 feature_columns = ['ret_fast', 'ret_slow', 'volatility', 'adx', 'volume_z', 'bb_dist_upper', 'bb_dist_lower', 'rsi', 'ultosc', 'ema_crossover', 'price_zscore']
                 features_df_stationarized = pd.DataFrame(index=df_mlp.index)
                 for col in feature_columns:
                     optimal_d = get_optimal_d(df_mlp[col])
                     features_df_stationarized[col] = fractional_difference(df_mlp[col], optimal_d)
-                
-                # --- 4. [MODIFIED] COMBINE FEATURES & HANDLE NaNs ---
                 combined_features = pd.concat([features_df_stationarized, market_phase_dummies], axis=1)
                 features_df = combined_features.dropna()
                 if len(features_df) < 50: continue
 
-                # --- 5. AUTOENCODER FEATURE DENOISING ---
-                st.info(f"[{symbol}] Training Autoencoder on combined feature set...")
-                ae_scaler = StandardScaler(); features_scaled = ae_scaler.fit_transform(features_df)
-                input_dim = features_scaled.shape[1]; encoding_dim = max(2, int(np.ceil(input_dim / 2)))
+                # --- 3. AUTOENCODER FEATURE DENOISING ---
+                ae_scaler = StandardScaler(); features_scaled_ae = ae_scaler.fit_transform(features_df)
+                input_dim = features_scaled_ae.shape[1]; encoding_dim = max(2, int(np.ceil(input_dim / 2)))
                 autoencoder, encoder = create_autoencoder(input_dim, encoding_dim)
-                autoencoder.fit(features_scaled, features_scaled, epochs=50, batch_size=32, shuffle=False, verbose=0)
-                encoded_features = encoder.predict(features_scaled, verbose=0)
+                autoencoder.fit(features_scaled_ae, features_scaled_ae, epochs=50, batch_size=32, shuffle=False, verbose=0)
+                encoded_features = encoder.predict(features_scaled_ae, verbose=0)
                 encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index, columns=[f'AE_{j}' for j in range(encoding_dim)])
                 
-                # --- 6. TRIPLE-BARRIER LABELING ---
-                VOL_MULT_PARAM = 1.5
-                labels, volatility = get_triple_barrier_labels_and_vol(df_mlp['high'], df_mlp['low'], df_mlp['close'], lookahead_periods=5, vol_mult=VOL_MULT_PARAM)
+                # --- 4. TRIPLE-BARRIER LABELING ---
+                labels, _ = get_triple_barrier_labels_and_vol(df_mlp['high'], df_mlp['low'], df_mlp['close'], lookahead_periods=5, vol_mult=1.5)
                 
-                # --- 7. DATA ALIGNMENT ---
+                # --- 5. DATA ALIGNMENT ---
                 common_index = encoded_features_df.index.intersection(labels.index)
                 final_features = encoded_features_df.loc[common_index]
                 final_labels = labels.loc[common_index]
-                final_volatility = volatility.loc[common_index]
                 if len(final_features) < 50: continue
-
-                # --- 8. CUSTOM SCORER & GridSearchCV ---
-                def tbl_score_func(y_true, y_pred, vol_series, vol_mult):
-                    r_pt_sl = vol_series * vol_mult; lambda_param = 20.0
-                    dcc_mask = (y_pred == y_true) & (y_true != 0); dic_mask = (y_pred != y_true) & (y_pred != 0) & (y_true != 0); tec_mask = (y_pred != 0) & (y_true == 0)
-                    score = np.sum(r_pt_sl[dcc_mask]) - np.sum(r_pt_sl[dic_mask]) - np.sum(r_pt_sl[tec_mask] / lambda_param)
-                    return score if np.isfinite(score) else -1e9
-                custom_scorer = make_scorer(tbl_score_func, greater_is_better=True, vol_series=final_volatility.values, vol_mult=VOL_MULT_PARAM)
                 
-                st.info(f"[{symbol}] Running GridSearchCV on denoised features...")
-                pipeline = make_pipeline(StandardScaler(), MLPClassifier(max_iter=500, random_state=42, early_stopping=True, activation='relu'))
-                param_grid = {'mlpclassifier__hidden_layer_sizes': [(16, 8),(32, 16), (64, 32)], 'mlpclassifier__alpha': [0.00001, 0.0001, 0.001]}
-                tscv = TimeSeriesSplit(n_splits=3)
-                grid_search = GridSearchCV(pipeline, param_grid, scoring=custom_scorer, cv=tscv, n_jobs=-1)
-                grid_search.fit(final_features, final_labels)
-                best_model = grid_search.best_estimator_
+                # --- 6. [NEW] BiLSTM MODEL TRAINING ---
+                st.info(f"[{symbol}] Preparing data and training BiLSTM model...")
+                # a. Remap labels for Keras: {-1: Sell -> 0, 0: Hold -> 1, 1: Buy -> 2}
+                y_mapped = final_labels.replace({-1: 0, 0: 1, 1: 2})
+                # b. Scale features
+                scaler = StandardScaler()
+                features_scaled = scaler.fit_transform(final_features)
+                features_scaled_df = pd.DataFrame(features_scaled, index=final_features.index, columns=final_features.columns)
+                # c. Create sequences
+                TIME_STEPS = 15
+                X_seq, y_seq = create_sequences(features_scaled_df, y_mapped, time_steps=TIME_STEPS)
+                if len(X_seq) < 30: continue
+                # d. Create and train model
+                bilstm_model = create_bilstm_model(input_shape=(X_seq.shape[1], X_seq.shape[2]), num_classes=3)
+                bilstm_model.fit(X_seq, y_seq, epochs=30, batch_size=16, verbose=0, shuffle=False)
 
-                # --- 9. PREDICTION ---
-                latest_features = final_features.iloc[-1:]
-                pred_code = best_model.predict(latest_features)[0]
-                pred_proba = best_model.predict_proba(latest_features)[0].max()
+                # --- 7. [NEW] PREDICTION WITH BiLSTM ---
+                latest_sequence_unscaled = final_features.iloc[-TIME_STEPS:]
+                latest_sequence_scaled = scaler.transform(latest_sequence_unscaled)
+                latest_sequence_reshaped = latest_sequence_scaled.reshape(1, TIME_STEPS, latest_sequence_scaled.shape[1])
+                pred_proba_all = bilstm_model.predict(latest_sequence_reshaped, verbose=0)[0]
+                pred_mapped_code = np.argmax(pred_proba_all)
+                confidence = pred_proba_all.max()
+                # Map prediction back to original format: {0 -> -1, 1 -> 0, 2 -> 1}
+                reverse_map = {0: -1, 1: 0, 2: 1}
+                pred_code = reverse_map[pred_mapped_code]
                 signal_map = {1: "Buy", -1: "Sell", 0: "Hold"}
-                mlp_signal = signal_map.get(pred_code, "Hold")
-                confidence = pred_proba
+                bilstm_signal = signal_map.get(pred_code, "Hold")
                 
-                # --- 10. OTHER METRICS CALCULATION ---
+                # --- 8. OTHER METRICS CALCULATION ---
                 market_phase = df_mlp['market_phase_cat'].iloc[-1]
-
                 close_prices = df["close"].values; coeffs = pywt.wavedec(close_prices, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1]))/0.6745
                 uthresh = sigma * np.sqrt(2*np.log(len(close_prices))); coeffs_thresh = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')[:len(close_prices)]
@@ -597,12 +466,11 @@ with tab3:
                 turnover = (df['wv_label'].shift(1) != df['wv_label']).astype(int).sum()
                 net_strat_ret = df['strat_ret'].sum() - (turnover * (20 / 10000)); net_bps = net_strat_ret * 10000
                 bull_bear_bias = df['wv_label'].mean(); gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0); accuracy = accuracy_score(gt, df['wv_label'])
-                
                 res_mom_signal = generate_residual_momentum_factor(df['close'], market_df['close'])
                 res_mom_score = res_mom_signal.iloc[-1] if not res_mom_signal.empty and pd.notna(res_mom_signal.iloc[-1]) else 0.0
 
                 results.append({
-                    'Token': symbol, 'MLP Signal': mlp_signal, 'Confidence': confidence, 'Market Phase': market_phase,
+                    'Token': symbol, 'BiLSTM Signal': bilstm_signal, 'Confidence': confidence, 'Market Phase': market_phase,
                     'Bull/Bear Bias': bull_bear_bias, 'Net BPS': net_bps, 'Wavelet Accuracy': accuracy, 'Residual Momentum': res_mom_score,
                 })
             except Exception as e:
@@ -615,22 +483,19 @@ with tab3:
         return pd.DataFrame(results)
 
     # ==============================================================================
-    # UI AND PLOTTING (UNCHANGED)
+    # UI AND PLOTTING
     # ==============================================================================
     if st.sidebar.button("📈 Run Comprehensive Analysis", key="run_wl"):
         watchlist_symbols = get_filtered_tickers(min_volume_wl)
-        
         if not watchlist_symbols:
             st.error("No tickers met the filter criteria. Watchlist is empty.")
         else:
             df_watchlist = generate_comprehensive_watchlist(watchlist_symbols, '1d', data_limit_wl)
-            
             if df_watchlist.empty:
                 st.warning("Analysis complete, but no data could be generated for the watchlist.")
             else:
                 st.subheader("Comprehensive Market Watchlist")
                 col1, col2 = st.columns([3, 1])
-                
                 with col1:
                     df_display_formatted = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
                     df_display_formatted['Confidence'] = df_display_formatted['Confidence'].map('{:.1%}'.format)
@@ -638,11 +503,10 @@ with tab3:
                     df_display_formatted['Net BPS'] = df_display_formatted['Net BPS'].map('{:,.0f}'.format)
                     df_display_formatted['Wavelet Accuracy'] = df_display_formatted['Wavelet Accuracy'].map('{:.1%}'.format)
                     df_display_formatted['Residual Momentum'] = df_display_formatted['Residual Momentum'].map('{:+.2f}'.format)
-                    column_order = ['Token', 'MLP Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias', 'Net BPS', 'Wavelet Accuracy', 'Residual Momentum']
+                    column_order = ['Token', 'BiLSTM Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias', 'Net BPS', 'Wavelet Accuracy', 'Residual Momentum']
                     st.dataframe(df_display_formatted[column_order], use_container_width=True, hide_index=True)
-
+                
                 phase_colors = {'Bull': '#60a971', 'Bear': '#d6454f', 'Correction': '#f8a541', 'Rebound': '#55b6e6'}
-
                 with col2:
                     st.subheader("Market Sentiment")
                     st.markdown("<h5 style='text-align: center;'>Market Phase Distribution</h5>", unsafe_allow_html=True)
@@ -655,166 +519,82 @@ with tab3:
 
                 st.subheader("Market Landscape Quadrant")
                 st.markdown("This chart plots all assets based on their long-term trend (`Bull/Bear Bias`) versus their short-term momentum relative to the market (`Residual Momentum`).")
-                
-                if df_watchlist.empty:
-                    st.info("No assets to display in the quadrant.")
-                else:
+                if not df_watchlist.empty:
                     fig_quadrant = px.scatter(
                         df_watchlist, x='Residual Momentum', y='Bull/Bear Bias', text='Token', color='Market Phase',
                         color_discrete_map=phase_colors, hover_data={'Residual Momentum': ':.2f', 'Bull/Bear Bias': ':.2%'}
                     )
-                    fig_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey")
-                    fig_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
+                    fig_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey"); fig_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
                     fig_quadrant.add_annotation(text="<b>Leading Bulls</b><br>(Strong Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
                     fig_quadrant.add_annotation(text="<b>Lagging Bulls</b><br>(Strong Trend, Underperforming)", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
                     fig_quadrant.add_annotation(text="<b>Reversal Candidates</b><br>(Bear Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
                     fig_quadrant.add_annotation(text="<b>Lagging Bears</b><br>(Bear Trend, Underperforming)", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
-                    fig_quadrant.add_annotation(
-                        text="<b>PERMUTATION RESEARCH ©</b>", xref="paper", yref="paper", x=0.5, y=0.5,
-                        showarrow=False, font=dict(size=72, color="rgba(220, 220, 220, 0.2)"), align="center"
-                    )
-                    fig_quadrant.update_traces(textposition='top center', textfont_size=10)
-                    fig_quadrant.update_yaxes(title_text="Bull/Bear Bias (Long-Term Trend)", zeroline=False, tickformat=".0%")
-                    fig_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
-                    fig_quadrant.update_layout(title_text="Bull/Bear Bias vs. Residual Momentum", height=500, legend_title="Market Phase")
+                    fig_quadrant.add_annotation(text="<b>PERMUTATION RESEARCH ©</b>", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font=dict(size=72, color="rgba(220, 220, 220, 0.2)"), align="center")
+                    fig_quadrant.update_traces(textposition='top center', textfont_size=10); fig_quadrant.update_yaxes(title_text="Bull/Bear Bias (Long-Term Trend)", zeroline=False, tickformat=".0%")
+                    fig_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False); fig_quadrant.update_layout(title_text="Bull/Bear Bias vs. Residual Momentum", height=500, legend_title="Market Phase")
                     st.plotly_chart(fig_quadrant, use_container_width=True)
-                # --- [NEW] AI Signal Confidence vs. Momentum Quadrant ---
+
                 st.subheader("AI Signal Confidence vs. Momentum Quadrant")
                 st.markdown("This chart visualizes the AI-generated signals, plotting the model's **Confidence** against the asset's **Residual Momentum**. The color of each point indicates the signal type (Buy, Sell, or Hold).")
-
-                if df_watchlist.empty:
-                    st.info("No assets to display in the quadrant.")
-                else:
+                if not df_watchlist.empty:
                     signal_colors = {'Buy': '#2ecc71', 'Sell': '#e74c3c', 'Hold': '#95a5a6'}
                     median_confidence = df_watchlist['Confidence'].median()
-
                     fig_signal_quadrant = px.scatter(
-                        df_watchlist,
-                        x='Residual Momentum',
-                        y='Confidence',
-                        text='Token',
-                        color='MLP Signal',
-                        color_discrete_map=signal_colors,
-                        hover_data={'Residual Momentum': ':.2f', 'Confidence': ':.2%'}
+                        df_watchlist, x='Residual Momentum', y='Confidence', text='Token', color='BiLSTM Signal',
+                        color_discrete_map=signal_colors, hover_data={'Residual Momentum': ':.2f', 'Confidence': ':.2%'}
                     )
-                    
-                    # Add median confidence and zero momentum lines
-                    fig_signal_quadrant.add_hline(y=median_confidence, line_width=1, line_dash="dash", line_color="grey",
-                                                  annotation_text=f"Median Confidence ({median_confidence:.1%})", 
-                                                  annotation_position="bottom right")
+                    fig_signal_quadrant.add_hline(y=median_confidence, line_width=1, line_dash="dash", line_color="grey", annotation_text=f"Median Confidence ({median_confidence:.1%})", annotation_position="bottom right")
                     fig_signal_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
-
-                    # Quadrant Annotations
                     fig_signal_quadrant.add_annotation(text="<b>High-Conviction & Positive Momentum</b>", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
                     fig_signal_quadrant.add_annotation(text="<b>High-Conviction & Negative Momentum</b>", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
                     fig_signal_quadrant.add_annotation(text="<b>Low-Conviction & Positive Momentum</b>", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
                     fig_signal_quadrant.add_annotation(text="<b>Low-Conviction & Negative Momentum</b>", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
-                    
-                    # Watermark
-                    fig_signal_quadrant.add_annotation(
-                        text="<b>PERMUTATION RESEARCH ©</b>", xref="paper", yref="paper", x=0.5, y=0.5,
-                        showarrow=False, font=dict(size=72, color="rgba(220, 220, 220, 0.2)"), align="center"
-                    )
-
-                    fig_signal_quadrant.update_traces(textposition='top center', textfont_size=10)
-                    fig_signal_quadrant.update_yaxes(title_text="AI Signal Confidence", zeroline=False, tickformat=".0%")
-                    fig_signal_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
-                    fig_signal_quadrant.update_layout(title_text="AI Signal Confidence vs. Residual Momentum", height=500, legend_title="AI Signal")
+                    fig_signal_quadrant.add_annotation(text="<b>PERMUTATION RESEARCH ©</b>", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font=dict(size=72, color="rgba(220, 220, 220, 0.2)"), align="center")
+                    fig_signal_quadrant.update_traces(textposition='top center', textfont_size=10); fig_signal_quadrant.update_yaxes(title_text="AI Signal Confidence", zeroline=False, tickformat=".0%")
+                    fig_signal_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False); fig_signal_quadrant.update_layout(title_text="AI Signal Confidence vs. Residual Momentum", height=500, legend_title="AI Signal")
                     st.plotly_chart(fig_signal_quadrant, use_container_width=True)
+
 # ==============================================================================
-# TAB 4: WAVELET SIGNAL VISUALIZER
-# ==============================================================================
-# ==============================================================================
-# TAB 4: WAVELET SIGNAL VISUALIZER
-# ==============================================================================
-# ==============================================================================
-# TAB 4: WAVELET SIGNAL VISUALIZER
-# ==============================================================================
-# ==============================================================================
-# TAB 4: WAVELET SIGNAL VISUALIZER
-# ==============================================================================
-# ==============================================================================
-# TAB 4: WAVELET SIGNAL VISUALIZER
-# ==============================================================================
-# ==============================================================================
-# TAB 4: WAVELET SIGNAL VISUALIZER
-# ==============================================================================
-# ==============================================================================
-# TAB 4: WAVELET SIGNAL VISUALIZER
-# ==============================================================================
-# ==============================================================================
-# TAB 4: WAVELET SIGNAL VISUALIZER
+# TAB 4: WAVELET SIGNAL VISUALIZER (Unchanged)
 # ==============================================================================
 with tab4:
     st.header("🌊 Wavelet Signal Visualizer")
     st.markdown("This tool denoises price data using wavelets and applies an auto-labeling algorithm to identify potential trend phases. The resulting signals are plotted directly on the price chart.")
-    
     st.sidebar.header("🌊 Wavelet Visualizer Settings")
     symbol_wv = st.sidebar.text_input("Symbol", "ETH/USD", key="wv_symbol")
     timeframe_wv = st.sidebar.selectbox("Timeframe", ['1h', '4h', '1d'], index=2, key="wv_tf")
     limit_wv = st.sidebar.slider("Data Bars", 500, 2000, 1000, key="wv_limit")
     threshold_type_wv = st.sidebar.radio("Threshold Type", ("Volatility-based", "Constant"), key="wv_thresh_type")
-    
     is_constant_disabled = threshold_type_wv != "Constant"
     constant_w_wv = st.sidebar.number_input("Constant Threshold (w)", value=0.015, step=0.001, format="%.4f", key="wv_const_w", disabled=is_constant_disabled)
     
     if st.sidebar.button("Visualize Wavelet Signals", key="run_wv"):
         with st.spinner(f"Generating wavelet signals for {symbol_wv}..."):
             df_wv = fetch_data(symbol_wv, timeframe_wv, limit_wv)
-            
             if df_wv.empty:
                 st.error(f"Could not fetch data for {symbol_wv}.")
             else:
-                # Denoising and Labeling logic remains the same...
                 close_prices = df_wv["close"].values
                 coeffs = pywt.wavedec(close_prices, 'db4', level=4)
                 sigma = np.median(np.abs(coeffs[-1])) / 0.6745
                 uthresh = sigma * np.sqrt(2 * np.log(len(close_prices)))
                 coeffs_thresh = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')[:len(close_prices)]
-
                 if threshold_type_wv == "Volatility-based":
                     w_used = rogers_satchell_volatility(df_wv)
                     st.info(f"Using volatility-based threshold (w): {w_used:.4f}")
                 else:
                     w_used = constant_w_wv
                     st.info(f"Using constant threshold (w): {w_used:.4f}")
-
                 labels = auto_labeling(data_denoised, w_used)
                 df_wv['label'] = labels
-
-                # Plotting
                 fig_wv = go.Figure()
                 fig_wv.add_trace(go.Scatter(x=df_wv.index, y=df_wv['close'], mode='lines', name='Close Price', line=dict(color='gray', width=2)))
-                
                 up_signals = df_wv[df_wv['label'] == 1]
                 fig_wv.add_trace(go.Scatter(x=up_signals.index, y=up_signals['close'], mode='markers', name='Up Signal', marker=dict(color='deepskyblue', size=7, symbol='circle')))
-                
                 down_signals = df_wv[df_wv['label'] == -1]
                 fig_wv.add_trace(go.Scatter(x=down_signals.index, y=down_signals['close'], mode='markers', name='Down Signal', marker=dict(color='crimson', size=7, symbol='circle')))
-
-                watermark_text = (
-                    f"<span style='font-size: 40px;'><b>{symbol_wv}</b></span><br>"
-                    f"<span style='font-size: 12px; line-height: 0.9em;'>Permutation Research ©</span>"
-                )
-                
-                fig_wv.add_annotation(
-                    text=watermark_text, xref="paper", yref="paper",
-                    x=0.05, y=0.98, showarrow=False,
-                    font=dict(color="rgba(0, 0, 0, 0.2)"),
-                    align="center", xanchor="left", yanchor="top"
-                )
-
-                # --- NEW: Updated layout with background color ---
-                fig_wv.update_layout(
-                    title=f'Wavelet Signals on {symbol_wv} Close Price',
-                    xaxis_title='Date',
-                    yaxis_title='Price (USD)',
-                    legend_title='Legend',
-                    height=600,
-                    paper_bgcolor='rgb(255, 255, 255)', # Background for the entire figure area
-                    plot_bgcolor='rgb(255, 255, 255)'  # Background for the plotting area
-                )
-                # --- END of new code ---
-                
+                watermark_text = f"<span style='font-size: 40px;'><b>{symbol_wv}</b></span><br><span style='font-size: 12px; line-height: 0.9em;'>Permutation Research ©</span>"
+                fig_wv.add_annotation(text=watermark_text, xref="paper", yref="paper", x=0.05, y=0.98, showarrow=False, font=dict(color="rgba(0, 0, 0, 0.2)"), align="center", xanchor="left", yanchor="top")
+                fig_wv.update_layout(title=f'Wavelet Signals on {symbol_wv} Close Price', xaxis_title='Date', yaxis_title='Price (USD)', legend_title='Legend', height=600, paper_bgcolor='rgb(255, 255, 255)', plot_bgcolor='rgb(255, 255, 255)')
                 st.plotly_chart(fig_wv, use_container_width=True)
