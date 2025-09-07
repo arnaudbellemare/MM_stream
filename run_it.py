@@ -3,7 +3,8 @@ import ccxt
 import pandas as pd
 import numpy as np
 from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler,MinMaxScaler
+from keras.callbacks import EarlyStopping
 from sklearn.pipeline import make_pipeline
 from sklearn.metrics import accuracy_score
 from scipy.stats import norm
@@ -352,13 +353,16 @@ with tab3:
         progress_bar = st.progress(0, text="Initializing analysis...")
         market_df = fetch_data('BTC/USD', timeframe, limit)
         if market_df.empty:
-            st.error("Could not fetch market data (BTC/USD). Cannot proceed."); return pd.DataFrame()
+            st.error("Could not fetch market data (BTC/USD). Cannot proceed.")
+            return pd.DataFrame()
 
         for i, symbol in enumerate(symbols):
             try:
+                st.info(f"[{symbol}] Training new model...")
                 df = fetch_data(symbol, timeframe, limit)
-                if df.empty or len(df) < 200: continue
-                
+                if df.empty or len(df) < 200:
+                    continue
+
                 # --- 1. RAW FEATURE ENGINEERING ---
                 df_model = df.copy()
                 df_model['bb_upper'], _, df_model['bb_lower'] = get_bollinger_bands(df_model['close'])
@@ -373,7 +377,8 @@ with tab3:
                 df_model['ret_slow'] = df_model['close'].pct_change(30)
                 df_model['volatility'] = df_model['close'].pct_change().rolling(20).std()
                 df_model['adx'] = get_adx(df_model['high'], df_model['low'], df_model['close'], 14)
-                w_fast = np.sign(df_model['ret_fast']); w_slow = np.sign(df_model['ret_slow'])
+                w_fast = np.sign(df_model['ret_fast'])
+                w_slow = np.sign(df_model['ret_slow'])
                 conditions = [(w_slow == 1) & (w_fast == 1), (w_slow == -1) & (w_fast == -1), (w_slow == 1) & (w_fast == -1)]
                 choices = ['Bull', 'Bear', 'Correction']
                 df_model['market_phase_cat'] = np.select(conditions, choices, default='Rebound')
@@ -387,48 +392,59 @@ with tab3:
                     features_df_stationarized[col] = fractional_difference(df_model[col], optimal_d)
                 combined_features = pd.concat([features_df_stationarized, market_phase_dummies], axis=1)
                 features_df = combined_features.dropna()
-                if len(features_df) < 50: continue
+                if len(features_df) < 100:
+                    continue
 
                 # --- 3. AUTOENCODER FEATURE DENOISING ---
-                ae_scaler = StandardScaler(); features_scaled_ae = ae_scaler.fit_transform(features_df)
-                input_dim = features_scaled_ae.shape[1]; encoding_dim = max(2, int(np.ceil(input_dim / 2)))
+                ae_scaler = MinMaxScaler()
+                features_scaled_ae = ae_scaler.fit_transform(features_df)
+                input_dim = features_scaled_ae.shape[1]
+                encoding_dim = max(2, int(np.ceil(input_dim / 2)))
                 autoencoder, encoder = create_autoencoder(input_dim, encoding_dim)
                 autoencoder.fit(features_scaled_ae, features_scaled_ae, epochs=50, batch_size=32, shuffle=False, verbose=0)
                 encoded_features = encoder.predict(features_scaled_ae, verbose=0)
                 encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index, columns=[f'AE_{j}' for j in range(encoding_dim)])
                 
-                # --- 4. TRIPLE-BARRIER LABELING ---
+                # --- 4. TRIPLE-BARRIER LABELING & ALIGNMENT ---
                 labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], lookahead_periods=5, vol_mult=1.5)
-                
-                # --- 5. DATA ALIGNMENT ---
                 common_index = encoded_features_df.index.intersection(labels.index)
                 final_features = encoded_features_df.loc[common_index]
                 final_labels = labels.loc[common_index]
-                if len(final_features) < 50: continue
+                if len(final_features) < 100:
+                    continue
                 
-                # --- 6. [NEW] BiLSTM MODEL TRAINING WITH TIMESERIESGENERATOR ---
-                st.info(f"[{symbol}] Preparing data and training BiLSTM model...")
+                # --- 5. BiLSTM MODEL PREPARATION & TRAINING ---
                 y_mapped = final_labels.replace({-1: 0, 0: 1, 1: 2})
-                scaler = StandardScaler()
+                scaler = MinMaxScaler()
                 features_scaled = scaler.fit_transform(final_features)
                 
-                # Split data for training generator
-                train_split_idx = int(len(features_scaled) * 0.8)
-                X_train = features_scaled[:train_split_idx]
-                y_train = y_mapped.iloc[:train_split_idx]
+                # Split data into training and validation sets for Early Stopping
+                train_val_split_idx = int(len(features_scaled) * 0.85)
+                X_train, X_val = features_scaled[:train_val_split_idx], features_scaled[train_val_split_idx:]
+                y_train, y_val = y_mapped.iloc[:train_val_split_idx], y_mapped.iloc[train_val_split_idx:]
+                
+                # Data Augmentation: Noise Injection
+                noise_factor = 0.01
+                X_train_noisy = X_train + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=X_train.shape)
                 
                 TIME_STEPS = 15
-                if len(X_train) <= TIME_STEPS: continue # Not enough data to create a single sequence
+                if len(X_train_noisy) <= TIME_STEPS or len(X_val) <= TIME_STEPS:
+                    continue
 
-                train_generator = TimeseriesGenerator(X_train, y_train.values, length=TIME_STEPS, batch_size=16)
+                train_generator = TimeseriesGenerator(X_train_noisy, y_train.values, length=TIME_STEPS, batch_size=16)
+                val_generator = TimeseriesGenerator(X_val, y_val.values, length=TIME_STEPS, batch_size=16)
                 
-                # Create and train model
+                # Define EarlyStopping callback
+                early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+                
+                # Create and train the model
                 bilstm_model = create_bilstm_model(input_shape=(TIME_STEPS, X_train.shape[1]), num_classes=3)
-                bilstm_model.fit(train_generator, epochs=30, verbose=0)
+                bilstm_model.fit(train_generator, validation_data=val_generator, epochs=50, verbose=0, callbacks=[early_stopping])
 
-                # --- 7. PREDICTION WITH BiLSTM ---
+                # --- 6. PREDICTION ---
                 latest_sequence_scaled = features_scaled[-TIME_STEPS:]
                 latest_sequence_reshaped = latest_sequence_scaled.reshape(1, TIME_STEPS, latest_sequence_scaled.shape[1])
+                
                 pred_proba_all = bilstm_model.predict(latest_sequence_reshaped, verbose=0)[0]
                 pred_mapped_code = np.argmax(pred_proba_all)
                 confidence = pred_proba_all.max()
@@ -437,16 +453,25 @@ with tab3:
                 signal_map = {1: "Buy", -1: "Sell", 0: "Hold"}
                 bilstm_signal = signal_map.get(pred_code, "Hold")
                 
-                # --- 8. OTHER METRICS CALCULATION ---
+                # --- 7. OTHER METRICS CALCULATION ---
                 market_phase = df_model['market_phase_cat'].iloc[-1]
-                close_prices = df["close"].values; coeffs = pywt.wavedec(close_prices, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1]))/0.6745
-                uthresh = sigma * np.sqrt(2*np.log(len(close_prices))); coeffs_thresh = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
+                close_prices = df["close"].values
+                coeffs = pywt.wavedec(close_prices, 'db4', level=4)
+                sigma = np.median(np.abs(coeffs[-1])) / 0.6745
+                uthresh = sigma * np.sqrt(2 * np.log(len(close_prices)))
+                coeffs_thresh = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')[:len(close_prices)]
-                w = rogers_satchell_volatility(df); wv_labels = auto_labeling(data_denoised, w)
-                df['wv_label'] = wv_labels; df['log_ret'] = np.log(df['close']/df['close'].shift(1)); df['strat_ret'] = df['wv_label'].shift(1) * df['log_ret']
+                w = rogers_satchell_volatility(df)
+                wv_labels = auto_labeling(data_denoised, w)
+                df['wv_label'] = wv_labels
+                df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
+                df['strat_ret'] = df['wv_label'].shift(1) * df['log_ret']
                 turnover = (df['wv_label'].shift(1) != df['wv_label']).astype(int).sum()
-                net_strat_ret = df['strat_ret'].sum() - (turnover * (20 / 10000)); net_bps = net_strat_ret * 10000
-                bull_bear_bias = df['wv_label'].mean(); gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0); accuracy = accuracy_score(gt, df['wv_label'])
+                net_strat_ret = df['strat_ret'].sum() - (turnover * (20 / 10000))
+                net_bps = net_strat_ret * 10000
+                bull_bear_bias = df['wv_label'].mean()
+                gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0)
+                accuracy = accuracy_score(gt, df['wv_label'])
                 res_mom_signal = generate_residual_momentum_factor(df['close'], market_df['close'])
                 res_mom_score = res_mom_signal.iloc[-1] if not res_mom_signal.empty and pd.notna(res_mom_signal.iloc[-1]) else 0.0
 
