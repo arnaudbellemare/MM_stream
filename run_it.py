@@ -572,7 +572,7 @@ with tab3:
                 
                 st.info(f"[{symbol}] Running GridSearchCV on denoised features...")
                 pipeline = make_pipeline(StandardScaler(), MLPClassifier(max_iter=500, random_state=42, early_stopping=True, activation='relu'))
-                param_grid = {'mlpclassifier__hidden_layer_sizes': [(32, 16), (64, 32)], 'mlpclassifier__alpha': [0.0001, 0.001]}
+                param_grid = {'mlpclassifier__hidden_layer_sizes': [(16, 8),(32, 16), (64, 32)], 'mlpclassifier__alpha': [0.00001, 0.0001, 0.001]}
                 tscv = TimeSeriesSplit(n_splits=3)
                 grid_search = GridSearchCV(pipeline, param_grid, scoring=custom_scorer, cv=tscv, n_jobs=-1)
                 grid_search.fit(final_features, final_labels)
