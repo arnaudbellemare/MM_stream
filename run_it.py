@@ -22,6 +22,7 @@ import tensorflow as tf
 from tensorflow import keras
 from keras.models import Model, Sequential
 from keras.layers import Input, Dense, Bidirectional, LSTM
+from keras.preprocessing.sequence import TimeseriesGenerator
 from sklearn.metrics import make_scorer
 warnings.filterwarnings('ignore')
 
@@ -131,7 +132,7 @@ with tab1:
                     # Plotting function for backtest results...
                     # (This function remains as it was)
 
-#==============================================================================
+==============================================================================
 # TAB 2: SG SWING ANALYSIS (Unchanged)
 # ==============================================================================
 with tab2:
@@ -147,8 +148,6 @@ with tab2:
         df_sg = fetch_data(symbol_sg, '1h', 1000)
         if df_sg.empty or len(df_sg) < window_long_sg: st.error("Not enough data for the selected SG window length.")
         else:
-            # SG Analysis logic and plotting...
-            # (This logic remains as it was)
             pass
 
 # ==============================================================================
@@ -182,17 +181,9 @@ def get_adx(high, low, close, window):
     return dx.ewm(alpha=1/window, adjust=False).mean()
 
 def create_autoencoder(input_dim, encoding_dim=8):
-    """
-    Creates a Keras Autoencoder model and a standalone Encoder model.
-    """
-    # --- Encoder Architecture ---
     input_layer = Input(shape=(input_dim,))
     encoded = Dense(encoding_dim, activation='relu')(input_layer)
-
-    # --- Decoder Architecture ---
     decoded = Dense(input_dim, activation='sigmoid')(encoded)
-
-    # --- Model Definitions ---
     autoencoder = Model(input_layer, decoded)
     encoder = Model(input_layer, encoded)
     autoencoder.compile(optimizer='adam', loss='mean_squared_error')
@@ -252,7 +243,7 @@ with tab3:
     st.header("📈 Comprehensive Watchlist")
     st.markdown("""
     This powerful tool generates a unified watchlist by combining **AI-driven predictions** with **robust statistical analysis**.
-    - **BiLSTM Signal & Confidence:** A unique Bidirectional LSTM network is trained for each asset. This advanced recurrent neural network is designed to capture complex temporal patterns from both past and future directions in the feature data. Features are made stationary using **Fractional Differencing** to preserve memory, and denoised with an **Autoencoder**.
+    - **BiLSTM Signal & Confidence:** A unique Bidirectional LSTM network is trained for each asset using Keras's efficient `TimeseriesGenerator`. This advanced recurrent neural network is designed to capture complex temporal patterns from both past and future directions in the feature data. Features are made stationary using **Fractional Differencing** to preserve memory, and denoised with an **Autoencoder**.
     - **Statistical Metrics:** Includes rule-based momentum phase, wavelet-based performance, and residual momentum.
     """)
     st.sidebar.header("📈 Watchlist Configuration")
@@ -340,18 +331,6 @@ with tab3:
             elif first_sl_hit is not None: labels.iloc[i] = -1
         return labels, volatility
 
-    # ==============================================================================
-    # [NEW] HELPER FUNCTIONS FOR BiLSTM MODEL
-    # ==============================================================================
-    def create_sequences(features, labels, time_steps=10):
-        """Creates sequences for LSTM model input."""
-        X, y = [], []
-        for i in range(len(features) - time_steps):
-            v = features.iloc[i:(i + time_steps)].values
-            X.append(v)
-            y.append(labels.iloc[i + time_steps])
-        return np.array(X), np.array(y)
-
     def create_bilstm_model(input_shape, num_classes):
         """Builds and compiles a Bidirectional LSTM model."""
         model = Sequential([
@@ -364,7 +343,7 @@ with tab3:
         return model
 
     # ==============================================================================
-    # MAIN WATCHLIST GENERATION FUNCTION (NOW WITH BiLSTM)
+    # MAIN WATCHLIST GENERATION FUNCTION (NOW WITH BiLSTM and TimeseriesGenerator)
     # ==============================================================================
     @st.cache_data(ttl=3600 * 2)
     def generate_comprehensive_watchlist(symbols, timeframe, limit):
@@ -381,31 +360,31 @@ with tab3:
                 if df.empty or len(df) < 200: continue
                 
                 # --- 1. RAW FEATURE ENGINEERING ---
-                df_mlp = df.copy()
-                df_mlp['bb_upper'], _, df_mlp['bb_lower'] = get_bollinger_bands(df_mlp['close'])
-                df_mlp['bb_dist_upper'] = df_mlp['bb_upper'] - df_mlp['close']
-                df_mlp['bb_dist_lower'] = df_mlp['close'] - df_mlp['bb_lower']
-                df_mlp['rsi'] = get_rsi(df_mlp['close'])
-                df_mlp['ultosc'] = get_ultosc(df_mlp['high'], df_mlp['low'], df_mlp['close'])
-                df_mlp['ema_crossover'] = get_ema_crossovers(df_mlp['close'])
-                df_mlp['price_zscore'] = get_zscore(df_mlp['close'])
-                df_mlp['volume_z'] = get_zscore(df_mlp['volume'])
-                df_mlp['ret_fast'] = df_mlp['close'].pct_change(7)
-                df_mlp['ret_slow'] = df_mlp['close'].pct_change(30)
-                df_mlp['volatility'] = df_mlp['close'].pct_change().rolling(20).std()
-                df_mlp['adx'] = get_adx(df_mlp['high'], df_mlp['low'], df_mlp['close'], 14)
-                w_fast = np.sign(df_mlp['ret_fast']); w_slow = np.sign(df_mlp['ret_slow'])
+                df_model = df.copy()
+                df_model['bb_upper'], _, df_model['bb_lower'] = get_bollinger_bands(df_model['close'])
+                df_model['bb_dist_upper'] = df_model['bb_upper'] - df_model['close']
+                df_model['bb_dist_lower'] = df_model['close'] - df_model['bb_lower']
+                df_model['rsi'] = get_rsi(df_model['close'])
+                df_model['ultosc'] = get_ultosc(df_model['high'], df_model['low'], df_model['close'])
+                df_model['ema_crossover'] = get_ema_crossovers(df_model['close'])
+                df_model['price_zscore'] = get_zscore(df_model['close'])
+                df_model['volume_z'] = get_zscore(df_model['volume'])
+                df_model['ret_fast'] = df_model['close'].pct_change(7)
+                df_model['ret_slow'] = df_model['close'].pct_change(30)
+                df_model['volatility'] = df_model['close'].pct_change().rolling(20).std()
+                df_model['adx'] = get_adx(df_model['high'], df_model['low'], df_model['close'], 14)
+                w_fast = np.sign(df_model['ret_fast']); w_slow = np.sign(df_model['ret_slow'])
                 conditions = [(w_slow == 1) & (w_fast == 1), (w_slow == -1) & (w_fast == -1), (w_slow == 1) & (w_fast == -1)]
                 choices = ['Bull', 'Bear', 'Correction']
-                df_mlp['market_phase_cat'] = np.select(conditions, choices, default='Rebound')
-                market_phase_dummies = pd.get_dummies(df_mlp['market_phase_cat'], prefix='phase')
+                df_model['market_phase_cat'] = np.select(conditions, choices, default='Rebound')
+                market_phase_dummies = pd.get_dummies(df_model['market_phase_cat'], prefix='phase')
 
                 # --- 2. FRACTIONAL DIFFERENCING ---
                 feature_columns = ['ret_fast', 'ret_slow', 'volatility', 'adx', 'volume_z', 'bb_dist_upper', 'bb_dist_lower', 'rsi', 'ultosc', 'ema_crossover', 'price_zscore']
-                features_df_stationarized = pd.DataFrame(index=df_mlp.index)
+                features_df_stationarized = pd.DataFrame(index=df_model.index)
                 for col in feature_columns:
-                    optimal_d = get_optimal_d(df_mlp[col])
-                    features_df_stationarized[col] = fractional_difference(df_mlp[col], optimal_d)
+                    optimal_d = get_optimal_d(df_model[col])
+                    features_df_stationarized[col] = fractional_difference(df_model[col], optimal_d)
                 combined_features = pd.concat([features_df_stationarized, market_phase_dummies], axis=1)
                 features_df = combined_features.dropna()
                 if len(features_df) < 50: continue
@@ -419,7 +398,7 @@ with tab3:
                 encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index, columns=[f'AE_{j}' for j in range(encoding_dim)])
                 
                 # --- 4. TRIPLE-BARRIER LABELING ---
-                labels, _ = get_triple_barrier_labels_and_vol(df_mlp['high'], df_mlp['low'], df_mlp['close'], lookahead_periods=5, vol_mult=1.5)
+                labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], lookahead_periods=5, vol_mult=1.5)
                 
                 # --- 5. DATA ALIGNMENT ---
                 common_index = encoded_features_df.index.intersection(labels.index)
@@ -427,37 +406,39 @@ with tab3:
                 final_labels = labels.loc[common_index]
                 if len(final_features) < 50: continue
                 
-                # --- 6. [NEW] BiLSTM MODEL TRAINING ---
+                # --- 6. [NEW] BiLSTM MODEL TRAINING WITH TIMESERIESGENERATOR ---
                 st.info(f"[{symbol}] Preparing data and training BiLSTM model...")
-                # a. Remap labels for Keras: {-1: Sell -> 0, 0: Hold -> 1, 1: Buy -> 2}
                 y_mapped = final_labels.replace({-1: 0, 0: 1, 1: 2})
-                # b. Scale features
                 scaler = StandardScaler()
                 features_scaled = scaler.fit_transform(final_features)
-                features_scaled_df = pd.DataFrame(features_scaled, index=final_features.index, columns=final_features.columns)
-                # c. Create sequences
+                
+                # Split data for training generator
+                train_split_idx = int(len(features_scaled) * 0.8)
+                X_train = features_scaled[:train_split_idx]
+                y_train = y_mapped.iloc[:train_split_idx]
+                
                 TIME_STEPS = 15
-                X_seq, y_seq = create_sequences(features_scaled_df, y_mapped, time_steps=TIME_STEPS)
-                if len(X_seq) < 30: continue
-                # d. Create and train model
-                bilstm_model = create_bilstm_model(input_shape=(X_seq.shape[1], X_seq.shape[2]), num_classes=3)
-                bilstm_model.fit(X_seq, y_seq, epochs=30, batch_size=16, verbose=0, shuffle=False)
+                if len(X_train) <= TIME_STEPS: continue # Not enough data to create a single sequence
 
-                # --- 7. [NEW] PREDICTION WITH BiLSTM ---
-                latest_sequence_unscaled = final_features.iloc[-TIME_STEPS:]
-                latest_sequence_scaled = scaler.transform(latest_sequence_unscaled)
+                train_generator = TimeseriesGenerator(X_train, y_train.values, length=TIME_STEPS, batch_size=16)
+                
+                # Create and train model
+                bilstm_model = create_bilstm_model(input_shape=(TIME_STEPS, X_train.shape[1]), num_classes=3)
+                bilstm_model.fit(train_generator, epochs=30, verbose=0)
+
+                # --- 7. PREDICTION WITH BiLSTM ---
+                latest_sequence_scaled = features_scaled[-TIME_STEPS:]
                 latest_sequence_reshaped = latest_sequence_scaled.reshape(1, TIME_STEPS, latest_sequence_scaled.shape[1])
                 pred_proba_all = bilstm_model.predict(latest_sequence_reshaped, verbose=0)[0]
                 pred_mapped_code = np.argmax(pred_proba_all)
                 confidence = pred_proba_all.max()
-                # Map prediction back to original format: {0 -> -1, 1 -> 0, 2 -> 1}
                 reverse_map = {0: -1, 1: 0, 2: 1}
                 pred_code = reverse_map[pred_mapped_code]
                 signal_map = {1: "Buy", -1: "Sell", 0: "Hold"}
                 bilstm_signal = signal_map.get(pred_code, "Hold")
                 
                 # --- 8. OTHER METRICS CALCULATION ---
-                market_phase = df_mlp['market_phase_cat'].iloc[-1]
+                market_phase = df_model['market_phase_cat'].iloc[-1]
                 close_prices = df["close"].values; coeffs = pywt.wavedec(close_prices, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1]))/0.6745
                 uthresh = sigma * np.sqrt(2*np.log(len(close_prices))); coeffs_thresh = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')[:len(close_prices)]
