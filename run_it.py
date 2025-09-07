@@ -18,6 +18,11 @@ import pywt
 import warnings
 from statsmodels.tsa.stattools import adfuller
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
+import tensorflow as tf
+from tensorflow import keras
+from keras.models import Model
+from keras.layers import Input, Dense
+from keras.optimizers import Adam
 from sklearn.metrics import make_scorer
 warnings.filterwarnings('ignore')
 
@@ -177,7 +182,33 @@ def get_adx(high, low, close, window):
     dx = 100 * (abs(plus_di - minus_di) / (plus_di + minus_di))
     return dx.ewm(alpha=1/window, adjust=False).mean()
 
+# ==============================================================================
+# [NEW] HELPER FUNCTION TO BUILD THE AUTOENCODER MODEL
+# ==============================================================================
+def create_autoencoder(input_dim, encoding_dim=8):
+    """
+    Creates a Keras Autoencoder model and a standalone Encoder model.
+    """
+    # --- Encoder Architecture ---
+    input_layer = Input(shape=(input_dim,))
+    # You can add more layers here for a deeper autoencoder
+    encoded = Dense(encoding_dim, activation='relu')(input_layer) # This is the "bottleneck"
 
+    # --- Decoder Architecture ---
+    # You can add more layers here for a deeper decoder
+    decoded = Dense(input_dim, activation='sigmoid')(encoded) # Reconstructs the original input
+
+    # --- Model Definitions ---
+    # 1. The full Autoencoder model (trains both encoder and decoder)
+    autoencoder = Model(input_layer, decoded)
+    
+    # 2. The standalone Encoder model (used for transforming data after training)
+    encoder = Model(input_layer, encoded)
+
+    # Compile the Autoencoder
+    autoencoder.compile(optimizer='adam', loss='mean_squared_error')
+    
+    return autoencoder, encoder
 def rogers_satchell_volatility(data):
     log_ho=np.log(data["high"]/data["open"]); log_lo=np.log(data["low"]/data["open"]); log_co=np.log(data["close"]/data["open"])
     return np.sqrt(np.mean(log_ho*(log_ho-log_co)+log_lo*(log_lo-log_co)))
@@ -390,15 +421,36 @@ with tab3:
     # ==============================================================================
     # MAIN WATCHLIST GENERATION FUNCTION (COMPLETELY OVERHAULED)
     # ==============================================================================
+    # ==============================================================================
+    # FULL AND COMPLETE generate_comprehensive_watchlist FUNCTION WITH AUTOENCODER
+    # [CORRECTLY INDENTED FOR PLACEMENT WITHIN 'with tab3:']
+    # ==============================================================================
+
     @st.cache_data(ttl=3600 * 2) # Cache results for 2 hours
     def generate_comprehensive_watchlist(symbols, timeframe, limit):
         st.info(f"Starting comprehensive analysis for {len(symbols)} tokens...")
         results = []
         progress_bar = st.progress(0, text="Initializing analysis...")
 
+        # Import Keras components inside the function to keep dependencies local
+        import tensorflow as tf
+        from tensorflow import keras
+        from keras.models import Model
+        from keras.layers import Input, Dense
+
         market_df = fetch_data('BTC/USD', timeframe, limit)
         if market_df.empty:
             st.error("Could not fetch market data (BTC/USD). Cannot proceed."); return pd.DataFrame()
+
+        # Helper function to build the autoencoder, defined inside for clarity
+        def create_autoencoder(input_dim, encoding_dim=8):
+            input_layer = Input(shape=(input_dim,))
+            encoded = Dense(encoding_dim, activation='relu', kernel_initializer='he_uniform')(input_layer)
+            decoded = Dense(input_dim, activation='sigmoid')(encoded)
+            autoencoder = Model(input_layer, decoded, name="Autoencoder")
+            encoder = Model(input_layer, encoded, name="Encoder")
+            autoencoder.compile(optimizer='adam', loss='mean_squared_error')
+            return autoencoder, encoder
 
         for i, symbol in enumerate(symbols):
             try:
@@ -407,7 +459,7 @@ with tab3:
                 
                 df_mlp = df.copy()
                 
-                # --- Feature Engineering (remains the same) ---
+                # --- 1. RAW FEATURE ENGINEERING (Unchanged) ---
                 df_mlp['bb_upper'], _, df_mlp['bb_lower'] = get_bollinger_bands(df_mlp['close'])
                 df_mlp['bb_dist_upper'] = df_mlp['bb_upper'] - df_mlp['close']
                 df_mlp['bb_dist_lower'] = df_mlp['close'] - df_mlp['bb_lower']
@@ -427,26 +479,46 @@ with tab3:
                     'ema_crossover', 'price_zscore'
                 ]
                 
-                # --- [NEW] STEP 1: Stationarize Features using Fractional Differencing ---
+                # --- 2. FRACTIONAL DIFFERENCING (Unchanged) ---
                 features_df_stationarized = pd.DataFrame(index=df_mlp.index)
                 for col in feature_columns:
                     optimal_d = get_optimal_d(df_mlp[col])
                     features_df_stationarized[col] = fractional_difference(df_mlp[col], optimal_d)
                 
                 features_df = features_df_stationarized.dropna()
+                if len(features_df) < 50: continue
 
-                # --- [MODIFIED] STEP 2: Get Labels AND Volatility ---
+                # --- 3. [NEW] AUTOENCODER FEATURE DENOISING ---
+                st.info(f"[{symbol}] Training Autoencoder for feature denoising...")
+                
+                ae_scaler = StandardScaler()
+                features_scaled = ae_scaler.fit_transform(features_df)
+                
+                input_dim = features_scaled.shape[1]
+                encoding_dim = max(2, int(np.ceil(input_dim / 2))) # Compress to ~half the dimensions
+                
+                autoencoder, encoder = create_autoencoder(input_dim, encoding_dim)
+                
+                autoencoder.fit(features_scaled, features_scaled,
+                                epochs=50, batch_size=32, shuffle=False, verbose=0)
+
+                encoded_features = encoder.predict(features_scaled, verbose=0)
+                encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index,
+                                                   columns=[f'AE_{j}' for j in range(encoding_dim)])
+                
+                # --- 4. TRIPLE-BARRIER LABELING (Unchanged) ---
                 VOL_MULT_PARAM = 1.5
                 labels, volatility = get_triple_barrier_labels_and_vol(df_mlp['close'], lookahead_periods=5, vol_mult=VOL_MULT_PARAM)
                 
-                common_index = features_df.index.intersection(labels.index)
-                features_df = features_df.loc[common_index]
-                labels = labels.loc[common_index]
-                volatility = volatility.loc[common_index]
+                # --- 5. [MODIFIED] DATA ALIGNMENT ---
+                common_index = encoded_features_df.index.intersection(labels.index)
+                final_features = encoded_features_df.loc[common_index]
+                final_labels = labels.loc[common_index]
+                final_volatility = volatility.loc[common_index]
 
-                if len(features_df) < 50: continue
+                if len(final_features) < 50: continue
 
-                # --- [NEW] STEP 3: Define a Custom Scorer Based on Profitability ---
+                # --- 6. CUSTOM SCORER (Unchanged) ---
                 def tbl_score_func(y_true, y_pred, vol_series, vol_mult):
                     r_pt_sl = vol_series * vol_mult
                     lambda_param = 20.0
@@ -456,28 +528,30 @@ with tab3:
                     score = np.sum(r_pt_sl[dcc_mask]) - np.sum(r_pt_sl[dic_mask]) - np.sum(r_pt_sl[tec_mask] / lambda_param)
                     return score if np.isfinite(score) else -1e9
 
-                custom_scorer = make_scorer(tbl_score_func, greater_is_better=True, vol_series=volatility.values, vol_mult=VOL_MULT_PARAM)
+                custom_scorer = make_scorer(tbl_score_func, greater_is_better=True, vol_series=final_volatility.values, vol_mult=VOL_MULT_PARAM)
 
-                # --- [MODIFIED] STEP 4: Use GridSearchCV for Model Selection ---
+                # --- 7. [MODIFIED] GridSearchCV on Denoised Features ---
+                st.info(f"[{symbol}] Running GridSearchCV on denoised features...")
                 pipeline = make_pipeline(StandardScaler(), MLPClassifier(max_iter=500, random_state=42, early_stopping=True, activation='relu'))
                 param_grid = {
                     'mlpclassifier__hidden_layer_sizes': [(32, 16), (64, 32)],
                     'mlpclassifier__alpha': [0.0001, 0.001]
                 }
                 tscv = TimeSeriesSplit(n_splits=3)
+                
                 grid_search = GridSearchCV(pipeline, param_grid, scoring=custom_scorer, cv=tscv, n_jobs=-1)
-                grid_search.fit(features_df, labels)
+                grid_search.fit(final_features, final_labels)
                 best_model = grid_search.best_estimator_
 
-                # --- [MODIFIED] STEP 5: Predict with the Best Found Model ---
-                latest_features = features_df.iloc[-1:]
+                # --- 8. PREDICTION (Modified to use denoised features) ---
+                latest_features = final_features.iloc[-1:]
                 pred_code = best_model.predict(latest_features)[0]
                 pred_proba = best_model.predict_proba(latest_features)[0].max()
                 signal_map = {1: "Buy", -1: "Sell", 0: "Hold"}
                 mlp_signal = signal_map.get(pred_code, "Hold")
                 confidence = pred_proba
                 
-                # --- The rest of the analysis remains the same ---
+                # --- 9. OTHER METRICS CALCULATION (Unchanged) ---
                 fast_ret = df['close'].iloc[-1] / df['close'].iloc[-8] - 1 if len(df) > 8 else 0
                 slow_ret = df['close'].iloc[-1] / df['close'].iloc[-31] - 1 if len(df) > 31 else 0
                 W_FAST = 1 if fast_ret >= 0 else -1; W_SLOW = 1 if slow_ret >= 0 else -1
