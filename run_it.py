@@ -22,7 +22,7 @@ import tensorflow as tf
 from tensorflow import keras
 from keras.models import Model, Sequential
 from keras.layers import Input, Dense, Bidirectional, LSTM
-from keras.preprocessing.sequence import TimeseriesGenerator
+from tensorflow.keras.preprocessing.sequence import TimeseriesGenerator
 from sklearn.metrics import make_scorer
 warnings.filterwarnings('ignore')
 
