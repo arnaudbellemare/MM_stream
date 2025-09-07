@@ -404,19 +404,73 @@ with tab3:
         return max_d
 
     # --- [MODIFIED] HELPER FUNCTION FOR TRIPLE-BARRIER LABELING ---
-    def get_triple_barrier_labels_and_vol(close, lookahead_periods=5, vol_mult=1.5):
+# ==============================================================================
+# [UPGRADED] HELPER FUNCTION FOR TRIPLE-BARRIER LABELING (Using High/Low Prices)
+# ==============================================================================
+    # ==============================================================================
+    # [UPGRADED & CORRECTLY INDENTED] HELPER FUNCTION FOR TRIPLE-BARRIER LABELING
+    # ==============================================================================
+    def get_triple_barrier_labels_and_vol(high, low, close, lookahead_periods=5, vol_mult=1.5):
+        """
+        Generates triple-barrier labels and volatility.
+
+        This upgraded version checks against future HIGH prices for profit-take
+        and future LOW prices for stop-loss, providing a more realistic labeling
+        that accounts for intraday price action.
+        """
+        # 1. Calculate volatility based on close-to-close returns (this is standard)
         returns = close.pct_change()
         volatility = returns.rolling(20).std().fillna(method='bfill')
         labels = pd.Series(0, index=close.index)
+
+        # 2. Iterate through each time step to generate labels
         for i in range(len(close) - lookahead_periods):
-            entry, vol = close.iloc[i], volatility.iloc[i]
+            entry_price = close.iloc[i]
+            vol = volatility.iloc[i]
+            
+            # Skip if volatility is zero to avoid division errors
             if vol == 0: continue
-            tp = entry * (1 + vol_mult * vol)
-            sl = entry * (1 - vol_mult * vol)
-            future = close.iloc[i+1 : i+1+lookahead_periods]
-            if (future >= tp).any(): labels.iloc[i] = 1
-            elif (future <= sl).any(): labels.iloc[i] = -1
-        return labels, volatility # Now returns volatility as well
+
+            # 3. Set the dynamic profit-take and stop-loss barriers
+            tp_level = entry_price * (1 + vol_mult * vol)
+            sl_level = entry_price * (1 - vol_mult * vol)
+
+            # 4. Get the high and low prices for the future lookahead window
+            future_highs = high.iloc[i+1 : i+1+lookahead_periods]
+            future_lows = low.iloc[i+1 : i+1+lookahead_periods]
+
+            # 5. Determine the time (number of bars) until each barrier is first hit
+            try:
+                # Find the first index where a future high touches the take-profit level
+                first_tp_hit = (future_highs >= tp_level).to_list().index(True)
+            except ValueError:
+                first_tp_hit = None # Barrier was not hit in the window
+
+            try:
+                # Find the first index where a future low touches the stop-loss level
+                first_sl_hit = (future_lows <= sl_level).to_list().index(True)
+            except ValueError:
+                first_sl_hit = None # Barrier was not hit in the window
+            
+            # 6. Assign labels based on which barrier (if any) was hit FIRST
+            if first_tp_hit is not None and first_sl_hit is not None:
+                # Both barriers were hit, determine which came first
+                if first_tp_hit < first_sl_hit:
+                    labels.iloc[i] = 1 # Take-profit was hit first
+                elif first_sl_hit < first_tp_hit:
+                    labels.iloc[i] = -1 # Stop-loss was hit first
+                else:
+                    # Barriers were hit on the same day, an ambiguous case
+                    labels.iloc[i] = 0
+            elif first_tp_hit is not None:
+                # Only the take-profit barrier was hit
+                labels.iloc[i] = 1
+            elif first_sl_hit is not None:
+                # Only the stop-loss barrier was hit
+                labels.iloc[i] = -1
+            # If neither was hit, the label correctly remains 0 (time barrier)
+                
+        return labels, volatility
 
     # ==============================================================================
     # MAIN WATCHLIST GENERATION FUNCTION (COMPLETELY OVERHAULED)
@@ -508,8 +562,13 @@ with tab3:
                 
                 # --- 4. TRIPLE-BARRIER LABELING (Unchanged) ---
                 VOL_MULT_PARAM = 1.5
-                labels, volatility = get_triple_barrier_labels_and_vol(df_mlp['close'], lookahead_periods=5, vol_mult=VOL_MULT_PARAM)
-                
+                labels, volatility = get_triple_barrier_labels_and_vol(
+                    df_mlp['high'], 
+                    df_mlp['low'], 
+                    df_mlp['close'], 
+                    lookahead_periods=5, 
+                    vol_mult=VOL_MULT_PARAM
+                )
                 # --- 5. [MODIFIED] DATA ALIGNMENT ---
                 common_index = encoded_features_df.index.intersection(labels.index)
                 final_features = encoded_features_df.loc[common_index]
