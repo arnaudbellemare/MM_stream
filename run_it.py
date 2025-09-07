@@ -717,7 +717,49 @@ with tab3:
                     fig_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
                     fig_quadrant.update_layout(title_text="Bull/Bear Bias vs. Residual Momentum", height=500, legend_title="Market Phase")
                     st.plotly_chart(fig_quadrant, use_container_width=True)
+                # --- [NEW] AI Signal Confidence vs. Momentum Quadrant ---
+                st.subheader("AI Signal Confidence vs. Momentum Quadrant")
+                st.markdown("This chart visualizes the AI-generated signals, plotting the model's **Confidence** against the asset's **Residual Momentum**. The color of each point indicates the signal type (Buy, Sell, or Hold).")
 
+                if df_watchlist.empty:
+                    st.info("No assets to display in the quadrant.")
+                else:
+                    signal_colors = {'Buy': '#2ecc71', 'Sell': '#e74c3c', 'Hold': '#95a5a6'}
+                    median_confidence = df_watchlist['Confidence'].median()
+
+                    fig_signal_quadrant = px.scatter(
+                        df_watchlist,
+                        x='Residual Momentum',
+                        y='Confidence',
+                        text='Token',
+                        color='MLP Signal',
+                        color_discrete_map=signal_colors,
+                        hover_data={'Residual Momentum': ':.2f', 'Confidence': ':.2%'}
+                    )
+                    
+                    # Add median confidence and zero momentum lines
+                    fig_signal_quadrant.add_hline(y=median_confidence, line_width=1, line_dash="dash", line_color="grey",
+                                                  annotation_text=f"Median Confidence ({median_confidence:.1%})", 
+                                                  annotation_position="bottom right")
+                    fig_signal_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
+
+                    # Quadrant Annotations
+                    fig_signal_quadrant.add_annotation(text="<b>High-Conviction & Positive Momentum</b>", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_signal_quadrant.add_annotation(text="<b>High-Conviction & Negative Momentum</b>", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    fig_signal_quadrant.add_annotation(text="<b>Low-Conviction & Positive Momentum</b>", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_signal_quadrant.add_annotation(text="<b>Low-Conviction & Negative Momentum</b>", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    
+                    # Watermark
+                    fig_signal_quadrant.add_annotation(
+                        text="<b>PERMUTATION RESEARCH ©</b>", xref="paper", yref="paper", x=0.5, y=0.5,
+                        showarrow=False, font=dict(size=72, color="rgba(220, 220, 220, 0.2)"), align="center"
+                    )
+
+                    fig_signal_quadrant.update_traces(textposition='top center', textfont_size=10)
+                    fig_signal_quadrant.update_yaxes(title_text="AI Signal Confidence", zeroline=False, tickformat=".0%")
+                    fig_signal_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
+                    fig_signal_quadrant.update_layout(title_text="AI Signal Confidence vs. Residual Momentum", height=500, legend_title="AI Signal")
+                    st.plotly_chart(fig_signal_quadrant, use_container_width=True)
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER
 # ==============================================================================
