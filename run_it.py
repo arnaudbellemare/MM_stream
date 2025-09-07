@@ -479,30 +479,6 @@ with tab3:
     # FULL AND COMPLETE generate_comprehensive_watchlist FUNCTION WITH AUTOENCODER
     # [CORRECTLY INDENTED FOR PLACEMENT WITHIN 'with tab3:']
     # ==============================================================================
-    # ==============================================================================
-    # [NEW & CORRECTLY INDENTED] HELPER FUNCTION FOR CREATING SEQUENTIAL FEATURES
-    # ==============================================================================
-    def create_sequential_features(df_features, window_size):
-        """
-        Transforms a DataFrame of features into a sequential, flattened format for an MLP.
-        """
-        sequential_dfs = []
-        for i in range(window_size):
-            # Shift the data back by 'i' periods
-            shifted_df = df_features.shift(i)
-            # Rename columns to indicate the time lag
-            shifted_df.columns = [f'{col}_lag_{i}' for col in df_features.columns]
-            sequential_dfs.append(shifted_df)
-        
-        # Concatenate all shifted dataframes horizontally
-        sequential_data = pd.concat(sequential_dfs, axis=1)
-        
-        # Drop rows with NaN values created by the shifting process
-        return sequential_data.dropna()
-    # ==============================================================================
-    # FULL AND COMPLETE generate_comprehensive_watchlist FUNCTION 
-    # [UPGRADED WITH SEQUENTIAL FEATURES & CORRECTLY INDENTED]
-    # ==============================================================================
 
     @st.cache_data(ttl=3600 * 2) # Cache results for 2 hours
     def generate_comprehensive_watchlist(symbols, timeframe, limit):
@@ -510,7 +486,7 @@ with tab3:
         results = []
         progress_bar = st.progress(0, text="Initializing analysis...")
 
-        # Import Keras components inside the function
+        # Import Keras components inside the function to keep dependencies local
         import tensorflow as tf
         from tensorflow import keras
         from keras.models import Model
@@ -520,7 +496,7 @@ with tab3:
         if market_df.empty:
             st.error("Could not fetch market data (BTC/USD). Cannot proceed."); return pd.DataFrame()
 
-        # Helper function to build the autoencoder
+        # Helper function to build the autoencoder, defined inside for clarity
         def create_autoencoder(input_dim, encoding_dim=8):
             input_layer = Input(shape=(input_dim,))
             encoded = Dense(encoding_dim, activation='relu', kernel_initializer='he_uniform')(input_layer)
@@ -533,12 +509,11 @@ with tab3:
         for i, symbol in enumerate(symbols):
             try:
                 df = fetch_data(symbol, timeframe, limit)
-                if df.empty or len(df) < 300: continue # Increased data requirement for windowing
+                if df.empty or len(df) < 200: continue
                 
                 df_mlp = df.copy()
                 
-                # --- 1. RAW FEATURE ENGINEERING ---
-                # ... (This part remains exactly the same) ...
+                # --- 1. RAW FEATURE ENGINEERING (Unchanged) ---
                 df_mlp['bb_upper'], _, df_mlp['bb_lower'] = get_bollinger_bands(df_mlp['close'])
                 df_mlp['bb_dist_upper'] = df_mlp['bb_upper'] - df_mlp['close']
                 df_mlp['bb_dist_lower'] = df_mlp['close'] - df_mlp['bb_lower']
@@ -557,71 +532,77 @@ with tab3:
                     'bb_dist_upper', 'bb_dist_lower', 'rsi', 'ultosc', 
                     'ema_crossover', 'price_zscore'
                 ]
-
-                # --- 2. FRACTIONAL DIFFERENCING ---
+                
+                # --- 2. FRACTIONAL DIFFERENCING (Unchanged) ---
                 features_df_stationarized = pd.DataFrame(index=df_mlp.index)
                 for col in feature_columns:
                     optimal_d = get_optimal_d(df_mlp[col])
                     features_df_stationarized[col] = fractional_difference(df_mlp[col], optimal_d)
+                
                 features_df = features_df_stationarized.dropna()
-                if len(features_df) < 150: continue # Need enough data for the window
+                if len(features_df) < 50: continue
 
-                # --- 3. AUTOENCODER DENOISING ---
+                # --- 3. [NEW] AUTOENCODER FEATURE DENOISING ---
                 st.info(f"[{symbol}] Training Autoencoder for feature denoising...")
+                
                 ae_scaler = StandardScaler()
                 features_scaled = ae_scaler.fit_transform(features_df)
+                
                 input_dim = features_scaled.shape[1]
-                encoding_dim = max(2, int(np.ceil(input_dim / 2)))
+                encoding_dim = max(2, int(np.ceil(input_dim / 2))) # Compress to ~half the dimensions
+                
                 autoencoder, encoder = create_autoencoder(input_dim, encoding_dim)
-                autoencoder.fit(features_scaled, features_scaled, epochs=50, batch_size=32, shuffle=False, verbose=0)
+                
+                autoencoder.fit(features_scaled, features_scaled,
+                                epochs=50, batch_size=32, shuffle=False, verbose=0)
+
                 encoded_features = encoder.predict(features_scaled, verbose=0)
                 encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index,
                                                    columns=[f'AE_{j}' for j in range(encoding_dim)])
                 
-                # --- 4. [NEW] CREATE SEQUENTIAL FEATURES ---
-                st.info(f"[{symbol}] Creating 100-day sequential feature vectors...")
-                WINDOW_LENGTH = 100
-                sequential_features_df = create_sequential_features(encoded_features_df, WINDOW_LENGTH)
-                
-                # --- 5. TRIPLE-BARRIER LABELING ---
+                # --- 4. TRIPLE-BARRIER LABELING (Unchanged) ---
                 VOL_MULT_PARAM = 1.5
-                labels, volatility = get_triple_barrier_labels_and_vol(df_mlp['high'], df_mlp['low'], df_mlp['close'], 
-                                                                        lookahead_periods=5, vol_mult=VOL_MULT_PARAM)
-                
-                # --- 6. DATA ALIGNMENT (with new sequential features) ---
-                common_index = sequential_features_df.index.intersection(labels.index)
-                final_features = sequential_features_df.loc[common_index]
+                labels, volatility = get_triple_barrier_labels_and_vol(
+                    df_mlp['high'], 
+                    df_mlp['low'], 
+                    df_mlp['close'], 
+                    lookahead_periods=5, 
+                    vol_mult=VOL_MULT_PARAM
+                )
+                # --- 5. [MODIFIED] DATA ALIGNMENT ---
+                common_index = encoded_features_df.index.intersection(labels.index)
+                final_features = encoded_features_df.loc[common_index]
                 final_labels = labels.loc[common_index]
                 final_volatility = volatility.loc[common_index]
+
                 if len(final_features) < 50: continue
 
-                # --- 7. CUSTOM SCORER ---
+                # --- 6. CUSTOM SCORER (Unchanged) ---
                 def tbl_score_func(y_true, y_pred, vol_series, vol_mult):
                     r_pt_sl = vol_series * vol_mult
                     lambda_param = 20.0
-                    dcc_mask = (y_pred == y_true) & (y_true != 0); dic_mask = (y_pred != y_true) & (y_pred != 0) & (y_true != 0)
+                    dcc_mask = (y_pred == y_true) & (y_true != 0)
+                    dic_mask = (y_pred != y_true) & (y_pred != 0) & (y_true != 0)
                     tec_mask = (y_pred != 0) & (y_true == 0)
                     score = np.sum(r_pt_sl[dcc_mask]) - np.sum(r_pt_sl[dic_mask]) - np.sum(r_pt_sl[tec_mask] / lambda_param)
                     return score if np.isfinite(score) else -1e9
+
                 custom_scorer = make_scorer(tbl_score_func, greater_is_better=True, vol_series=final_volatility.values, vol_mult=VOL_MULT_PARAM)
 
-                # --- 8. GridSearchCV (with stronger regularization) ---
-                st.info(f"[{symbol}] Running GridSearchCV on sequential features...")
+                # --- 7. [MODIFIED] GridSearchCV on Denoised Features ---
+                st.info(f"[{symbol}] Running GridSearchCV on denoised features...")
                 pipeline = make_pipeline(StandardScaler(), MLPClassifier(max_iter=500, random_state=42, early_stopping=True, activation='relu'))
-                
-                # [MODIFIED] Added simpler model and stronger regularization (alpha=0.01)
-                # to combat overfitting with the new high-dimensional features.
                 param_grid = {
-                    'mlpclassifier__hidden_layer_sizes': [(16, 8), (32, 16)], 
-                    'mlpclassifier__alpha': [0.001, 0.01] 
+                    'mlpclassifier__hidden_layer_sizes': [(32, 16), (64, 32)],
+                    'mlpclassifier__alpha': [0.0001, 0.001]
                 }
-                
                 tscv = TimeSeriesSplit(n_splits=3)
+                
                 grid_search = GridSearchCV(pipeline, param_grid, scoring=custom_scorer, cv=tscv, n_jobs=-1)
                 grid_search.fit(final_features, final_labels)
                 best_model = grid_search.best_estimator_
 
-                # --- 9. PREDICTION ---
+                # --- 8. PREDICTION (Modified to use denoised features) ---
                 latest_features = final_features.iloc[-1:]
                 pred_code = best_model.predict(latest_features)[0]
                 pred_proba = best_model.predict_proba(latest_features)[0].max()
@@ -629,11 +610,36 @@ with tab3:
                 mlp_signal = signal_map.get(pred_code, "Hold")
                 confidence = pred_proba
                 
-                # --- 10. OTHER METRICS CALCULATION ---
-                # ... (This part remains exactly the same) ...
+                # --- 9. OTHER METRICS CALCULATION (Unchanged) ---
                 fast_ret = df['close'].iloc[-1] / df['close'].iloc[-8] - 1 if len(df) > 8 else 0
                 slow_ret = df['close'].iloc[-1] / df['close'].iloc[-31] - 1 if len(df) > 31 else 0
-                # ...
+                W_FAST = 1 if fast_ret >= 0 else -1; W_SLOW = 1 if slow_ret >= 0 else -1
+                if W_SLOW==1 and W_FAST==1: market_phase="Bull"
+                elif W_SLOW==-1 and W_FAST==-1: market_phase="Bear"
+                elif W_SLOW==1 and W_FAST==-1: market_phase="Correction"
+                else: market_phase="Rebound"
+
+                close_prices = df["close"].values
+                coeffs = pywt.wavedec(close_prices, 'db4', level=4); sigma = np.median(np.abs(coeffs[-1]))/0.6745
+                uthresh = sigma * np.sqrt(2*np.log(len(close_prices)))
+                coeffs_thresh = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
+                data_denoised = pywt.waverec(coeffs_thresh, 'db4')[:len(close_prices)]
+                
+                w = rogers_satchell_volatility(df); wv_labels = auto_labeling(data_denoised, w)
+                df['wv_label'] = wv_labels
+                df['log_ret'] = np.log(df['close']/df['close'].shift(1))
+                df['strat_ret'] = df['wv_label'].shift(1) * df['log_ret']
+                turnover = (df['wv_label'].shift(1) != df['wv_label']).astype(int).sum()
+                net_strat_ret = df['strat_ret'].sum() - (turnover * (20 / 10000))
+                net_bps = net_strat_ret * 10000
+
+                bull_bear_bias = df['wv_label'].mean()
+                gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0)
+                accuracy = accuracy_score(gt, df['wv_label'])
+                
+                res_mom_signal = generate_residual_momentum_factor(df['close'], market_df['close'])
+                res_mom_score = res_mom_signal.iloc[-1] if not res_mom_signal.empty and pd.notna(res_mom_signal.iloc[-1]) else 0.0
+
                 results.append({
                     'Token': symbol, 'MLP Signal': mlp_signal, 'Confidence': confidence, 'Market Phase': market_phase,
                     'Bull/Bear Bias': bull_bear_bias, 'Net BPS': net_bps, 'Wavelet Accuracy': accuracy, 'Residual Momentum': res_mom_score,
