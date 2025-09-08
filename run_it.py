@@ -385,7 +385,32 @@ with tab3:
         ])
         model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
         return model
+    # --- [NEW] BREAKOUT AND EWMAC HELPER FUNCTIONS ---
+    def breakout(price, lookback=10, smooth=None):
+        if smooth is None: smooth = max(int(lookback / 4.0), 1)
+        assert smooth < lookback
+        roll_max = price.rolling(lookback, min_periods=int(min(len(price), np.ceil(lookback / 2.0)))).max()
+        roll_min = price.rolling(lookback, min_periods=int(min(len(price), np.ceil(lookback / 2.0)))).min()
+        roll_mean = (roll_max + roll_min) / 2.0
+        output = 40.0 * ((price - roll_mean) / (roll_max - roll_min))
+        smoothed_output = output.ewm(span=smooth, min_periods=np.ceil(smooth / 2.0)).mean()
+        return smoothed_output
 
+    def robust_vol_calc(price, vol_days=35):
+        price_changes = price.diff()
+        vol = price_changes.rolling(window=vol_days, min_periods=max(2, int(vol_days/2))).std()
+        return vol
+
+    def ewmac(price, vol, Lfast, Lslow):
+        fast_ewma = price.ewm(span=Lfast, min_periods=1).mean()
+        slow_ewma = price.ewm(span=Lslow, min_periods=1).mean()
+        raw_ewmac = fast_ewma - slow_ewma
+        return raw_ewmac / vol.ffill()
+
+    def ewmac_calc_vol(price, Lfast, Lslow, vol_days=35):
+        vol = robust_vol_calc(price, vol_days)
+        forecast = ewmac(price, vol, Lfast, Lslow)
+        return forecast
     # ==============================================================================
     # MAIN WATCHLIST GENERATION FUNCTION (NOW WITH BiLSTM and TimeseriesGenerator)
     # ==============================================================================
@@ -610,7 +635,39 @@ with tab3:
                     fig_signal_quadrant.update_traces(textposition='top center', textfont_size=10); fig_signal_quadrant.update_yaxes(title_text="AI Signal Confidence", zeroline=False, tickformat=".0%")
                     fig_signal_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False); fig_signal_quadrant.update_layout(title_text="AI Signal Confidence vs. Residual Momentum", height=500, legend_title="AI Signal")
                     st.plotly_chart(fig_signal_quadrant, use_container_width=True)
+                # --- [NEW] BREAKOUT QUADRANT ---
+                st.subheader("Breakout vs. Momentum Quadrant")
+                st.markdown("This chart plots asset strength based on its breakout potential (Y-axis) versus its short-term momentum relative to the market (X-axis).")
+                if not df_watchlist.empty:
+                    fig_breakout_quadrant = px.scatter(df_watchlist, x='Residual Momentum', y='Breakout', text='Token', color='Market Phase', color_discrete_map=phase_colors, hover_data={'Residual Momentum': ':.2f', 'Breakout': ':.2f'})
+                    fig_breakout_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey")
+                    fig_breakout_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
+                    fig_breakout_quadrant.add_annotation(text="<b>Strong Breakout & Outperforming</b>", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_breakout_quadrant.add_annotation(text="<b>Strong Breakout & Underperforming</b>", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    fig_breakout_quadrant.add_annotation(text="<b>Breakdown Risk & Outperforming</b>", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_breakout_quadrant.add_annotation(text="<b>Breakdown Risk & Underperforming</b>", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    fig_breakout_quadrant.update_traces(textposition='top center', textfont_size=10)
+                    fig_breakout_quadrant.update_yaxes(title_text="Breakout Signal", zeroline=False)
+                    fig_breakout_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
+                    fig_breakout_quadrant.update_layout(title_text="Breakout Signal vs. Residual Momentum", height=500, legend_title="Market Phase")
+                    st.plotly_chart(fig_breakout_quadrant, use_container_width=True)
 
+                # --- [NEW] EWMAC QUADRANT ---
+                st.subheader("EWMAC Trend vs. Momentum Quadrant")
+                st.markdown("This chart plots the trend-following signal from a volatility-adjusted EWMAC (Y-axis) against the asset's residual momentum (X-axis).")
+                if not df_watchlist.empty:
+                    fig_ewmac_quadrant = px.scatter(df_watchlist, x='Residual Momentum', y='EWMAC', text='Token', color='Market Phase', color_discrete_map=phase_colors, hover_data={'Residual Momentum': ':.2f', 'EWMAC': ':.2f'})
+                    fig_ewmac_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey")
+                    fig_ewmac_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
+                    fig_ewmac_quadrant.add_annotation(text="<b>Bull Trend & Outperforming</b>", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_ewmac_quadrant.add_annotation(text="<b>Bull Trend & Underperforming</b>", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    fig_ewmac_quadrant.add_annotation(text="<b>Bear Trend & Outperforming</b>", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_ewmac_quadrant.add_annotation(text="<b>Bear Trend & Underperforming</b>", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    fig_ewmac_quadrant.update_traces(textposition='top center', textfont_size=10)
+                    fig_ewmac_quadrant.update_yaxes(title_text="EWMAC Forecast", zeroline=False)
+                    fig_ewmac_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
+                    fig_ewmac_quadrant.update_layout(title_text="EWMAC Forecast vs. Residual Momentum", height=500, legend_title="Market Phase")
+                    st.plotly_chart(fig_ewmac_quadrant, use_container_width=True)
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER (Unchanged)
 # ==============================================================================
