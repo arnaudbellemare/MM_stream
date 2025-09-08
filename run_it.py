@@ -412,7 +412,7 @@ with tab3:
                 
                 df = clean_and_prepare_data(df_raw, symbol)
                 
-                if df.empty or len(df) < 200:
+                if df.empty or len(df) < 90:
                     st.warning(f"[{symbol}] Not enough data after cleaning. Skipping.")
                     continue
                 
