@@ -158,7 +158,7 @@ with tab2:
 STABLECOINS = { 'USDC', 'DAI', 'BUSD', 'TUSD', 'PAX', 'GUSD', 'USDK', 'UST', 'SUSD', 'FRAX', 'LUSD', 'MIM', 'USDQ',
     'TBTC', 'WBTC', 'EUL', 'EUR', 'EURT', 'USDS', 'USTS', 'USTC', 'USDR', 'PYUSD', 'EURR', 'GBP', 'AUD', 'EURQ',
     'T', 'USDG', 'WAXL', 'IDEX', 'FIS', 'CSM', 'MV', 'POWR', 'ATLAS', 'XCN', 'BOBA', 'OXY', 'BNC', 'POLIS', 'AIR',
-    'C98', 'BODEN', 'HDX', 'MSOL', 'REP', 'ANLOG', 'RLUSD', 'USDT','EUROP'}
+    'C98', 'BODEN', 'HDX', 'MSOL', 'REP', 'ANLOG', 'RLUSD', 'USDT','EUROP','TOKE'}
 
 @st.cache_data(ttl=3600)
 def get_filtered_tickers(min_quote_volume):
@@ -412,7 +412,7 @@ with tab3:
                 
                 df = clean_and_prepare_data(df_raw, symbol)
                 
-                if df.empty or len(df) < 90:
+                if df.empty or len(df) < 5:
                     st.warning(f"[{symbol}] Not enough data after cleaning. Skipping.")
                     continue
                 
