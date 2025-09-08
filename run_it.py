@@ -25,6 +25,7 @@ from keras.models import Model, Sequential
 from keras.layers import Input, Dense, Bidirectional, LSTM
 from tensorflow.keras.preprocessing.sequence import TimeseriesGenerator
 from sklearn.metrics import make_scorer
+from scipy.stats.mstats import winsorize
 warnings.filterwarnings('ignore')
 
 # ==============================================================================
@@ -236,7 +237,49 @@ def generate_residual_momentum_factor(asset_prices: pd.Series, market_prices: pd
     best_params = results_df.loc[results_df['score'].idxmax()]
     final_signal = _calculate_residual_momentum(asset_prices, market_prices, beta_window=int(best_params['beta_window']), momentum_window=int(best_params['momentum_window']))
     return final_signal
+@st.cache_data
+def clean_and_prepare_data(df_raw, symbol):
+    """
+    Performs a full cleaning pipeline on the raw OHLCV data.
+    - Handles missing values with forward-fill.
+    - Caps outliers in volume and log returns using Winsorization.
+    """
+    st.info(f"[{symbol}] Cleaning and preparing raw data...")
+    df = df_raw.copy()
 
+    # 1. Ensure numeric types for core columns
+    for col in ['open', 'high', 'low', 'close', 'volume']:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # 2. Handle Missing Values
+    initial_rows = len(df)
+    df.ffill(inplace=True)
+    df.dropna(inplace=True)
+    
+    if len(df) < initial_rows:
+        st.write(f"[{symbol}] Note: Removed {initial_rows - len(df)} rows with initial missing values.")
+
+    if df.empty:
+        return pd.DataFrame()
+
+    # 3. Handle Outliers using Winsorization
+    # For Volume
+    df['volume'] = winsorize(df['volume'], limits=[0.05, 0.05])
+    
+    # [CHANGED] For Price, using Log Returns
+    df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
+    
+    # Winsorize the log returns to handle extreme price shocks
+    # We must handle the first NaN value from the return calculation
+    df.dropna(subset=['log_returns'], inplace=True)
+    df['log_returns'] = winsorize(df['log_returns'], limits=[0.05, 0.05])
+    
+    # Clean up the temporary 'log_returns' column
+    df.drop(columns=['log_returns'], inplace=True)
+    
+    st.write(f"[{symbol}] Data cleaned. Outliers in volume and log returns have been capped via Winsorization.")
+    
+    return df
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
@@ -346,6 +389,10 @@ with tab3:
     # ==============================================================================
     # MAIN WATCHLIST GENERATION FUNCTION (NOW WITH BiLSTM and TimeseriesGenerator)
     # ==============================================================================
+
+
+
+
     @st.cache_data(ttl=3600 * 2)
     def generate_comprehensive_watchlist(symbols, timeframe, limit):
         st.info(f"Starting comprehensive analysis for {len(symbols)} tokens...")
@@ -358,11 +405,19 @@ with tab3:
 
         for i, symbol in enumerate(symbols):
             try:
-                st.info(f"[{symbol}] Training new model...")
-                df = fetch_data(symbol, timeframe, limit)
-                if df.empty or len(df) < 200:
+                # --- [NEW] DATA CLEANING STEP (now uses Winsorize & Log Returns) ---
+                df_raw = fetch_data(symbol, timeframe, limit)
+                if df_raw.empty:
                     continue
-
+                
+                df = clean_and_prepare_data(df_raw, symbol)
+                
+                if df.empty or len(df) < 200:
+                    st.warning(f"[{symbol}] Not enough data after cleaning. Skipping.")
+                    continue
+                
+                st.info(f"[{symbol}] Training new model on cleaned data...")
+                
                 # --- 1. RAW FEATURE ENGINEERING ---
                 df_model = df.copy()
                 df_model['bb_upper'], _, df_model['bb_lower'] = get_bollinger_bands(df_model['close'])
@@ -418,12 +473,10 @@ with tab3:
                 scaler = MinMaxScaler()
                 features_scaled = scaler.fit_transform(final_features)
                 
-                # Split data into training and validation sets for Early Stopping
                 train_val_split_idx = int(len(features_scaled) * 0.85)
                 X_train, X_val = features_scaled[:train_val_split_idx], features_scaled[train_val_split_idx:]
                 y_train, y_val = y_mapped.iloc[:train_val_split_idx], y_mapped.iloc[train_val_split_idx:]
                 
-                # Data Augmentation: Noise Injection
                 noise_factor = 0.01
                 X_train_noisy = X_train + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=X_train.shape)
                 
@@ -434,10 +487,8 @@ with tab3:
                 train_generator = TimeseriesGenerator(X_train_noisy, y_train.values, length=TIME_STEPS, batch_size=16)
                 val_generator = TimeseriesGenerator(X_val, y_val.values, length=TIME_STEPS, batch_size=16)
                 
-                # Define EarlyStopping callback
                 early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
                 
-                # Create and train the model
                 bilstm_model = create_bilstm_model(input_shape=(TIME_STEPS, X_train.shape[1]), num_classes=3)
                 bilstm_model.fit(train_generator, validation_data=val_generator, epochs=50, verbose=0, callbacks=[early_stopping])
 
@@ -486,7 +537,7 @@ with tab3:
                 progress_bar.progress((i + 1) / len(symbols), text=f"Analyzed {symbol}...")
         
         progress_bar.empty()
-        return pd.DataFrame(results)
+        return pd.DataFrame(results)    
 
     # ==============================================================================
     # UI AND PLOTTING
