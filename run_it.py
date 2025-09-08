@@ -26,6 +26,7 @@ from keras.layers import Input, Dense, Bidirectional, LSTM
 from tensorflow.keras.preprocessing.sequence import TimeseriesGenerator
 from sklearn.metrics import make_scorer
 from scipy.stats.mstats import winsorize
+from keras.layers import Input, Dense, Bidirectional, LSTM, TimeDistributed, LayerNormalization, MultiHeadAttention, Dropout, GlobalAveragePooling1D, GaussianNoise
 warnings.filterwarnings('ignore')
 
 # ==============================================================================
@@ -415,7 +416,55 @@ with tab3:
     # MAIN WATCHLIST GENERATION FUNCTION (NOW WITH BiLSTM and TimeseriesGenerator)
     # ==============================================================================
 
+    # --- [NEW] UNIFIED, END-TO-END MODEL ARCHITECTURE ---
+    def create_end_to_end_model(input_shape, num_classes, head_size=256, num_heads=4, ff_dim=4, num_transformer_blocks=4, lstm_units=64, dropout=0.1):
+        """
+        Creates the unified BiLSTM-DAE + Transformer model.
+        """
+        inputs = Input(shape=input_shape)
+        
+        # 1. Denoising Autoencoder Part
+        # Add noise to the input for robust feature learning
+        x_noisy = GaussianNoise(0.01)(inputs)
+        
+        # BiLSTM Encoder
+        encoded = Bidirectional(LSTM(lstm_units, return_sequences=True))(x_noisy)
+        encoded = Dropout(dropout)(encoded)
 
+        # BiLSTM Decoder for reconstruction
+        decoded = Bidirectional(LSTM(lstm_units, return_sequences=True))(encoded)
+        # The output of the decoder must match the original input shape
+        reconstruction_output = TimeDistributed(Dense(input_shape[-1]), name='reconstruction_output')(decoded)
+
+        # 2. Transformer Part
+        # The input to the transformer is the robust features from the encoder
+        x = encoded
+        for _ in range(num_transformer_blocks):
+            # Layer normalization and Multi-head attention
+            x_norm = LayerNormalization(epsilon=1e-6)(x)
+            attention_output = MultiHeadAttention(num_heads=num_heads, key_dim=head_size, dropout=dropout)(x_norm, x_norm)
+            # Skip connection
+            x = x + attention_output
+            
+            # Layer normalization and Feed-forward network
+            x_norm = LayerNormalization(epsilon=1e-6)(x)
+            ffn = Dense(ff_dim, activation="relu")(x_norm)
+            ffn = Dropout(dropout)(ffn)
+            ffn = Dense(input_shape[-1])(ffn)
+            # Skip connection
+            x = x + ffn
+            
+        # 3. Prediction Head
+        # Condense the sequence of outputs into a single vector for classification
+        x = GlobalAveragePooling1D(data_format="channels_last")(x)
+        x = Dropout(0.2)(x)
+        x = Dense(20, activation="relu")(x)
+        prediction_output = Dense(num_classes, activation="softmax", name='prediction_output')(x)
+
+        # Create the model with one input and two outputs
+        model = Model(inputs=inputs, outputs=[prediction_output, reconstruction_output])
+        
+        return model
 
 
     @st.cache_data(ttl=3600 * 2)
@@ -425,25 +474,22 @@ with tab3:
         progress_bar = st.progress(0, text="Initializing analysis...")
         market_df = fetch_data('BTC/USD', timeframe, limit)
         if market_df.empty:
-            st.error("Could not fetch market data (BTC/USD). Cannot proceed.")
+            st.error("Could not fetch market data (BTC/USD). Cannot proceed with analysis.")
             return pd.DataFrame()
 
         for i, symbol in enumerate(symbols):
             try:
-                # --- [NEW] DATA CLEANING STEP (now uses Winsorize & Log Returns) ---
+                # --- 1. DATA FETCHING AND PREPARATION ---
                 df_raw = fetch_data(symbol, timeframe, limit)
                 if df_raw.empty:
                     continue
-                
                 df = clean_and_prepare_data(df_raw, symbol)
-                
-                if df.empty or len(df) < 5:
+                if df.empty or len(df) < 200:
                     st.warning(f"[{symbol}] Not enough data after cleaning. Skipping.")
                     continue
+                st.info(f"[{symbol}] Generating features and training model...")
                 
-                st.info(f"[{symbol}] Training new model on cleaned data...")
-                
-                # --- 1. RAW FEATURE ENGINEERING ---
+                # --- 2. FEATURE ENGINEERING ---
                 df_model = df.copy()
                 df_model['bb_upper'], _, df_model['bb_lower'] = get_bollinger_bands(df_model['close'])
                 df_model['bb_dist_upper'] = df_model['bb_upper'] - df_model['close']
@@ -457,14 +503,13 @@ with tab3:
                 df_model['ret_slow'] = df_model['close'].pct_change(30)
                 df_model['volatility'] = df_model['close'].pct_change().rolling(20).std()
                 df_model['adx'] = get_adx(df_model['high'], df_model['low'], df_model['close'], 14)
-                w_fast = np.sign(df_model['ret_fast'])
-                w_slow = np.sign(df_model['ret_slow'])
+                w_fast, w_slow = np.sign(df_model['ret_fast']), np.sign(df_model['ret_slow'])
                 conditions = [(w_slow == 1) & (w_fast == 1), (w_slow == -1) & (w_fast == -1), (w_slow == 1) & (w_fast == -1)]
                 choices = ['Bull', 'Bear', 'Correction']
                 df_model['market_phase_cat'] = np.select(conditions, choices, default='Rebound')
                 market_phase_dummies = pd.get_dummies(df_model['market_phase_cat'], prefix='phase')
 
-                # --- 2. FRACTIONAL DIFFERENCING ---
+                # --- 3. FEATURE STATIONARIZATION ---
                 feature_columns = ['ret_fast', 'ret_slow', 'volatility', 'adx', 'volume_z', 'bb_dist_upper', 'bb_dist_lower', 'rsi', 'ultosc', 'ema_crossover', 'price_zscore']
                 features_df_stationarized = pd.DataFrame(index=df_model.index)
                 for col in feature_columns:
@@ -473,61 +518,58 @@ with tab3:
                 combined_features = pd.concat([features_df_stationarized, market_phase_dummies], axis=1)
                 features_df = combined_features.dropna()
                 if len(features_df) < 100:
+                    st.warning(f"[{symbol}] Not enough data after feature generation. Skipping.")
                     continue
 
-                # --- 3. AUTOENCODER FEATURE DENOISING ---
-                ae_scaler = MinMaxScaler()
-                features_scaled_ae = ae_scaler.fit_transform(features_df)
-                input_dim = features_scaled_ae.shape[1]
-                encoding_dim = max(2, int(np.ceil(input_dim / 2)))
-                autoencoder, encoder = create_autoencoder(input_dim, encoding_dim)
-                autoencoder.fit(features_scaled_ae, features_scaled_ae, epochs=50, batch_size=32, shuffle=False, verbose=0)
-                encoded_features = encoder.predict(features_scaled_ae, verbose=0)
-                encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index, columns=[f'AE_{j}' for j in range(encoding_dim)])
-                
-                # --- 4. TRIPLE-BARRIER LABELING & ALIGNMENT ---
+                # --- 4. TRIPLE-BARRIER LABELING & DATA ALIGNMENT ---
                 labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], lookahead_periods=5, vol_mult=1.5)
-                common_index = encoded_features_df.index.intersection(labels.index)
-                final_features = encoded_features_df.loc[common_index]
-                final_labels = labels.loc[common_index]
+                common_index = features_df.index.intersection(labels.index)
+                final_features, final_labels = features_df.loc[common_index], labels.loc[common_index]
                 if len(final_features) < 100:
                     continue
                 
-                # --- 5. BiLSTM MODEL PREPARATION & TRAINING ---
+                # --- 5. END-TO-END MODEL PREPARATION & TRAINING ---
                 y_mapped = final_labels.replace({-1: 0, 0: 1, 1: 2})
                 scaler = MinMaxScaler()
                 features_scaled = scaler.fit_transform(final_features)
-                
                 train_val_split_idx = int(len(features_scaled) * 0.85)
                 X_train, X_val = features_scaled[:train_val_split_idx], features_scaled[train_val_split_idx:]
                 y_train, y_val = y_mapped.iloc[:train_val_split_idx], y_mapped.iloc[train_val_split_idx:]
-                
-                noise_factor = 0.01
-                X_train_noisy = X_train + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=X_train.shape)
-                
                 TIME_STEPS = 15
-                if len(X_train_noisy) <= TIME_STEPS or len(X_val) <= TIME_STEPS:
+                if len(X_train) <= TIME_STEPS or len(X_val) <= TIME_STEPS:
                     continue
-
-                train_generator = TimeseriesGenerator(X_train_noisy, y_train.values, length=TIME_STEPS, batch_size=16)
+                train_generator = TimeseriesGenerator(X_train, y_train.values, length=TIME_STEPS, batch_size=16)
                 val_generator = TimeseriesGenerator(X_val, y_val.values, length=TIME_STEPS, batch_size=16)
                 
-                early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
-                
-                bilstm_model = create_bilstm_model(input_shape=(TIME_STEPS, X_train.shape[1]), num_classes=3)
-                bilstm_model.fit(train_generator, validation_data=val_generator, epochs=50, verbose=0, callbacks=[early_stopping])
+                def multi_output_generator(generator):
+                    for i in range(len(generator)):
+                        x_batch, y_batch = generator[i]
+                        yield x_batch, {'prediction_output': y_batch, 'reconstruction_output': x_batch}
+
+                e2e_model = create_end_to_end_model(input_shape=(TIME_STEPS, X_train.shape[1]), num_classes=3)
+                e2e_model.compile(
+                    optimizer='adam',
+                    loss={'prediction_output': 'sparse_categorical_crossentropy', 'reconstruction_output': 'mean_squared_error'},
+                    loss_weights={'prediction_output': 1.0, 'reconstruction_output': 0.2},
+                    metrics={'prediction_output': ['accuracy']}
+                )
+                early_stopping = EarlyStopping(monitor='val_prediction_output_loss', patience=5, restore_best_weights=True)
+                e2e_model.fit(
+                    multi_output_generator(train_generator),
+                    validation_data=multi_output_generator(val_generator),
+                    epochs=50, verbose=0, callbacks=[early_stopping]
+                )
 
                 # --- 6. PREDICTION ---
                 latest_sequence_scaled = features_scaled[-TIME_STEPS:]
                 latest_sequence_reshaped = latest_sequence_scaled.reshape(1, TIME_STEPS, latest_sequence_scaled.shape[1])
-                
-                pred_proba_all = bilstm_model.predict(latest_sequence_reshaped, verbose=0)[0]
+                pred_proba_all = e2e_model.predict(latest_sequence_reshaped, verbose=0)[0][0]
                 pred_mapped_code = np.argmax(pred_proba_all)
                 confidence = pred_proba_all.max()
                 reverse_map = {0: -1, 1: 0, 2: 1}
                 pred_code = reverse_map[pred_mapped_code]
                 signal_map = {1: "Buy", -1: "Sell", 0: "Hold"}
-                bilstm_signal = signal_map.get(pred_code, "Hold")
+                ai_signal = signal_map.get(pred_code, "Hold")
                 
                 # --- 7. OTHER METRICS CALCULATION ---
                 market_phase = df_model['market_phase_cat'].iloc[-1]
@@ -539,21 +581,27 @@ with tab3:
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')[:len(close_prices)]
                 w = rogers_satchell_volatility(df)
                 wv_labels = auto_labeling(data_denoised, w)
-                df['wv_label'] = wv_labels
-                df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
+                df['wv_label'], df['log_ret'] = wv_labels, np.log(df['close'] / df['close'].shift(1))
                 df['strat_ret'] = df['wv_label'].shift(1) * df['log_ret']
                 turnover = (df['wv_label'].shift(1) != df['wv_label']).astype(int).sum()
                 net_strat_ret = df['strat_ret'].sum() - (turnover * (20 / 10000))
-                net_bps = net_strat_ret * 10000
-                bull_bear_bias = df['wv_label'].mean()
-                gt = np.sign(df['close'].shift(-1) - df['close']).fillna(0)
-                accuracy = accuracy_score(gt, df['wv_label'])
+                net_bps, bull_bear_bias = net_strat_ret * 10000, df['wv_label'].mean()
                 res_mom_signal = generate_residual_momentum_factor(df['close'], market_df['close'])
                 res_mom_score = res_mom_signal.iloc[-1] if not res_mom_signal.empty and pd.notna(res_mom_signal.iloc[-1]) else 0.0
+                breakout_signal = breakout(df['close'], lookback=20)
+                breakout_score = breakout_signal.iloc[-1] if not breakout_signal.empty and pd.notna(breakout_signal.iloc[-1]) else 0.0
+                ewmac_pairs, weights = [(8, 16), (16, 32), (32, 64), (64, 128)], np.array([4, 3, 2, 1])
+                normalized_weights, ewmac_scores = weights / np.sum(weights), []
+                for lfast, lslow in ewmac_pairs:
+                    signal = ewmac_calc_vol(df['close'], Lfast=lfast, Lslow=lslow)
+                    ewmac_scores.append(signal.iloc[-1] if not signal.empty and pd.notna(signal.iloc[-1]) else 0.0)
+                ewmac_score = np.dot(ewmac_scores, normalized_weights)
 
+                # --- 8. APPEND RESULTS ---
                 results.append({
-                    'Token': symbol, 'BiLSTM Signal': bilstm_signal, 'Confidence': confidence, 'Market Phase': market_phase,
-                    'Bull/Bear Bias': bull_bear_bias, 'Net BPS': net_bps, 'Wavelet Accuracy': accuracy, 'Residual Momentum': res_mom_score,
+                    'Token': symbol, 'AI Signal': ai_signal, 'Confidence': confidence, 'Market Phase': market_phase,
+                    'Bull/Bear Bias': bull_bear_bias, 'Net BPS': net_bps, 'Residual Momentum': res_mom_score,
+                    'Breakout': breakout_score, 'EWMAC': ewmac_score,
                 })
             except Exception as e:
                 st.warning(f"Could not analyze {symbol}. Error: {e}")
@@ -562,7 +610,8 @@ with tab3:
                 progress_bar.progress((i + 1) / len(symbols), text=f"Analyzed {symbol}...")
         
         progress_bar.empty()
-        return pd.DataFrame(results)    
+        st.success("Comprehensive analysis complete!")
+        return pd.DataFrame(results)
 
     # ==============================================================================
     # UI AND PLOTTING
