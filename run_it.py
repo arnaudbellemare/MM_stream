@@ -477,7 +477,7 @@ with tab3:
                 if df_raw.empty:
                     continue
                 df = clean_and_prepare_data(df_raw, symbol)
-                if df.empty or len(df) < 200:
+                if df.empty or len(df) < 5:
                     st.warning(f"[{symbol}] Not enough data after cleaning. Skipping.")
                     continue
                 st.info(f"[{symbol}] Generating features and training model...")
