@@ -416,56 +416,49 @@ with tab3:
     # MAIN WATCHLIST GENERATION FUNCTION (NOW WITH BiLSTM and TimeseriesGenerator)
     # ==============================================================================
 
-    # --- [NEW] UNIFIED, END-TO-END MODEL ARCHITECTURE ---
     def create_end_to_end_model(input_shape, num_classes, head_size=256, num_heads=4, ff_dim=4, num_transformer_blocks=4, lstm_units=64, dropout=0.1):
-        """
-        Creates the unified BiLSTM-DAE + Transformer model.
-        """
+
         inputs = Input(shape=input_shape)
-        
-        # 1. Denoising Autoencoder Part
-        # Add noise to the input for robust feature learning
+    
+    # 1. Denoising Autoencoder Part
         x_noisy = GaussianNoise(0.01)(inputs)
-        
-        # BiLSTM Encoder
+    
+    # BiLSTM Encoder: Output shape will be (None, time_steps, lstm_units * 2)
         encoded = Bidirectional(LSTM(lstm_units, return_sequences=True))(x_noisy)
         encoded = Dropout(dropout)(encoded)
 
-        # BiLSTM Decoder for reconstruction
+    # BiLSTM Decoder for reconstruction
         decoded = Bidirectional(LSTM(lstm_units, return_sequences=True))(encoded)
-        # The output of the decoder must match the original input shape
         reconstruction_output = TimeDistributed(Dense(input_shape[-1]), name='reconstruction_output')(decoded)
 
-        # 2. Transformer Part
-        # The input to the transformer is the robust features from the encoder
+    # 2. Transformer Part
         x = encoded
         for _ in range(num_transformer_blocks):
-            # Layer normalization and Multi-head attention
+        # Layer normalization and Multi-head attention
             x_norm = LayerNormalization(epsilon=1e-6)(x)
             attention_output = MultiHeadAttention(num_heads=num_heads, key_dim=head_size, dropout=dropout)(x_norm, x_norm)
-            # Skip connection
+        # Skip connection
             x = x + attention_output
-            
-            # Layer normalization and Feed-forward network
+        
+        # Layer normalization and Feed-forward network
             x_norm = LayerNormalization(epsilon=1e-6)(x)
             ffn = Dense(ff_dim, activation="relu")(x_norm)
             ffn = Dropout(dropout)(ffn)
-            ffn = Dense(input_shape[-1])(ffn)
-            # Skip connection
+        # [FIXED LINE] Ensure the output dimension matches the input for the skip connection
+            ffn = Dense(lstm_units * 2)(ffn)
+        # Skip connection
             x = x + ffn
-            
-        # 3. Prediction Head
-        # Condense the sequence of outputs into a single vector for classification
+        
+    # 3. Prediction Head
         x = GlobalAveragePooling1D(data_format="channels_last")(x)
         x = Dropout(0.2)(x)
         x = Dense(20, activation="relu")(x)
         prediction_output = Dense(num_classes, activation="softmax", name='prediction_output')(x)
 
-        # Create the model with one input and two outputs
+    # Create the model with one input and two outputs
         model = Model(inputs=inputs, outputs=[prediction_output, reconstruction_output])
-        
+    
         return model
-
 
     @st.cache_data(ttl=3600 * 2)
     def generate_comprehensive_watchlist(symbols, timeframe, limit):
