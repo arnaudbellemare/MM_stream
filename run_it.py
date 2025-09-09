@@ -546,7 +546,7 @@ with tab3:
                     loss_weights={'prediction_output': 1.0, 'reconstruction_output': 0.2},
                     metrics={'prediction_output': ['accuracy']}
                 )
-                early_stopping = EarlyStopping(monitor='val_prediction_output_loss', patience=5, restore_best_weights=True)
+                early_stopping = EarlyStopping(monitor='val_prediction_output_loss', patience=5, restore_best_weights=True, mode='min')
                 e2e_model.fit(
                     multi_output_generator(train_generator),
                     validation_data=multi_output_generator(val_generator),
