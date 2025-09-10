@@ -502,7 +502,7 @@ with tab3:
                 encoded_features = encoder.predict(features_scaled_ae, verbose=0)
                 encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index, columns=[f'AE_{j}' for j in range(encoding_dim)])
                 # [CORRECTED] Added df_model['open'] as the fourth argument
-                labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], df_model['open'], lookahead_periods=5, vol_mult=1.5)
+                labels, _ = get_triple_barrier_labels_and_vol(df_model['high'],df_model['low'],df_model['close'],df_model['open'], lookahead_periods=5,vol_mult=1.5)
                 common_index = encoded_features_df.index.intersection(labels.index)
                 final_features = encoded_features_df.loc[common_index]
                 final_labels = labels.loc[common_index]
