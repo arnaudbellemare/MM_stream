@@ -355,13 +355,15 @@ with tab3:
             if p_value <= p_value_threshold: return d
         return max_d
 
-    def get_triple_barrier_labels_and_vol(high, low, close, lookahead_periods=5, vol_mult=1.5):
-        returns = close.pct_change()
-        volatility = returns.rolling(20).std().fillna(method='bfill')
+    def get_triple_barrier_labels_and_vol(high, low, close, open_,  lookahead_periods=5, vol_mult=1.5, lambda_param=0.89, rs_weight=0.3, window=24): # [ADDED] open_
+    # [REPLACED]   returns = close.pct_change()
+    # [REPLACED]  volatility = returns.rolling(20).std().fillna(method='bfill')
+        volatility = get_hybrid_volatility(high, low, open_, close, lambda_param, rs_weight, window) # [ADDED]
+
         labels = pd.Series(0, index=close.index)
         for i in range(len(close) - lookahead_periods):
             entry_price = close.iloc[i]; vol = volatility.iloc[i]
-            if vol == 0: continue
+            if pd.isna(vol) or vol == 0: continue # Include isNA
             tp_level = entry_price * (1 + vol_mult * vol); sl_level = entry_price * (1 - vol_mult * vol)
             future_highs = high.iloc[i+1 : i+1+lookahead_periods]; future_lows = low.iloc[i+1 : i+1+lookahead_periods]
             try: first_tp_hit = (future_highs >= tp_level).to_list().index(True)
@@ -448,7 +450,7 @@ with tab3:
                 df_model['volume_z'] = get_zscore(df_model['volume'])
                 df_model['ret_fast'] = df_model['close'].pct_change(7)
                 df_model['ret_slow'] = df_model['close'].pct_change(30)
-                df_model['volatility'] = df_model['close'].pct_change().rolling(20).std()
+                df_model['volatility'] = get_hybrid_volatility(high=df_model['high'],low=df_model['low'],open_=df_model['open'],close=df_model['close'])
                 df_model['adx'] = get_adx(df_model['high'], df_model['low'], df_model['close'], 14)
                 w_fast = np.sign(df_model['ret_fast']); w_slow = np.sign(df_model['ret_slow'])
                 conditions = [(w_slow == 1) & (w_fast == 1), (w_slow == -1) & (w_fast == -1), (w_slow == 1) & (w_fast == -1)]
@@ -654,6 +656,9 @@ with tab3:
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER (Unchanged)
 # ==============================================================================
+# ==============================================================================
+# TAB 4: WAVELET SIGNAL VISUALIZER (Corrected)
+# ==============================================================================
 with tab4:
     st.header("🌊 Wavelet Signal Visualizer")
     st.markdown("This tool denoises price data using wavelets and applies an auto-labeling algorithm to identify potential trend phases. The resulting signals are plotted directly on the price chart.")
@@ -677,14 +682,29 @@ with tab4:
                 uthresh = sigma * np.sqrt(2 * np.log(len(close_prices)))
                 coeffs_thresh = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')[:len(close_prices)]
+                
                 if threshold_type_wv == "Volatility-based":
-                    w_used = rogers_satchell_volatility(df_wv)
-                    st.info(f"Using volatility-based threshold (w): {w_used:.4f}")
+                    # --- THIS IS THE MODIFIED SECTION ---
+                    st.info("Calculating hybrid volatility...")
+                    # 1. Calculate the hybrid volatility series for the entire dataframe
+                    hybrid_vol_series = get_hybrid_volatility(
+                        df_wv['high'],
+                        df_wv['low'],
+                        df_wv['open'],
+                        df_wv['close']
+                    )
+                    # 2. Get the most recent volatility value to use as the threshold 'w'
+                    w_used = hybrid_vol_series.iloc[-1] ### <-- CHANGED LINE
+                    st.info(f"Using latest Hybrid Volatility as threshold (w): {w_used:.4f}") ### <-- CHANGED LINE
                 else:
                     w_used = constant_w_wv
                     st.info(f"Using constant threshold (w): {w_used:.4f}")
+
+                # The auto_labeling function will now use the latest hybrid volatility
                 labels = auto_labeling(data_denoised, w_used)
                 df_wv['label'] = labels
+
+                # --- PLOTTING LOGIC (Unchanged) ---
                 fig_wv = go.Figure()
                 fig_wv.add_trace(go.Scatter(x=df_wv.index, y=df_wv['close'], mode='lines', name='Close Price', line=dict(color='gray', width=2)))
                 up_signals = df_wv[df_wv['label'] == 1]
