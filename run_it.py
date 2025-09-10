@@ -275,7 +275,7 @@ with tab3:
     - **Statistical Metrics:** Includes rule-based momentum phase, wavelet-based performance, and residual momentum.
     """)
     st.sidebar.header("📈 Watchlist Configuration")
-    min_volume_wl = st.sidebar.number_input("Minimum 24h Quote Volume", value=250000, key="wl_min_vol")
+    min_volume_wl = st.sidebar.number_input("Minimum 24h Quote Volume", value=100000, key="wl_min_vol")
     data_limit_wl = st.sidebar.slider("Data Bars for Analysis", 500, 2000, 1500, key="wl_limit")
 
     # ==============================================================================
