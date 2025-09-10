@@ -265,7 +265,7 @@ def clean_and_prepare_data(df_raw, symbol):
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
 # ==============================================================================
-# TAB 3: COMPREHENSIVE WATCHLIST (WITH HARDCODED OPTIMIZED PARAMETERS)
+# TAB 3: COMPREHENSIVE WATCHLIST (WITH CHART-OPTIMIZED PARAMETERS)
 # ==============================================================================
 with tab3:
     st.header("📈 Comprehensive Watchlist")
@@ -419,7 +419,7 @@ with tab3:
                 if df.empty or len(df) < 100:
                     st.warning(f"[{symbol}] Not enough data after cleaning. Skipping.")
                     continue
-                st.info(f"[{symbol}] Training new model with optimized parameters...")
+                st.info(f"[{symbol}] Training new model with chart-optimized parameters...")
                 
                 # Feature Engineering...
                 df_model = df.copy()
@@ -453,15 +453,15 @@ with tab3:
                 features_scaled_ae = ae_scaler.fit_transform(features_df)
                 input_dim = features_scaled_ae.shape[1]
                 
-                # <<< HARDCODED OPTIMIZATION: Autoencoder >>>
-                best_encoding_dim = 32
+                # <<< HARDCODED OPTIMIZATION (from Chart): Autoencoder >>>
+                best_encoding_dim = 24
                 autoencoder, encoder = create_autoencoder(input_dim, best_encoding_dim)
                 autoencoder.fit(features_scaled_ae, features_scaled_ae, epochs=50, batch_size=32, shuffle=False, verbose=0)
                 encoded_features = encoder.predict(features_scaled_ae, verbose=0)
                 encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index, columns=[f'AE_{j}' for j in range(best_encoding_dim)])
 
-                # <<< HARDCODED OPTIMIZATION: Triple Barrier >>>
-                best_horizon = 25
+                # <<< HARDCODED OPTIMIZATION (from Chart): Triple Barrier >>>
+                best_horizon = 24
                 labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], lookahead_periods=best_horizon, vol_mult=1.5)
                 
                 common_index = encoded_features_df.index.intersection(labels.index)
@@ -478,10 +478,10 @@ with tab3:
                 noise_factor = 0.01
                 X_train_noisy = X_train + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=X_train.shape)
 
-                # <<< HARDCODED OPTIMIZATION: BiLSTM Architecture >>>
+                # <<< HARDCODED OPTIMIZATION (from Chart): BiLSTM Architecture >>>
                 TIME_STEPS = 25
                 LSTM_UNITS = 96
-                BATCH_SIZE = 48
+                BATCH_SIZE = 32
                 
                 if len(X_train_noisy) <= TIME_STEPS or len(X_val) <= TIME_STEPS: continue
                 train_generator = TimeseriesGenerator(X_train_noisy, y_train.values, length=TIME_STEPS, batch_size=BATCH_SIZE)
