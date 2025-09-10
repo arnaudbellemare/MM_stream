@@ -486,10 +486,10 @@ with tab3:
                 y_train, y_val = y_mapped.iloc[:train_val_split_idx], y_mapped.iloc[train_val_split_idx:]
                 noise_factor = 0.01
                 X_train_noisy = X_train + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=X_train.shape)
-                TIME_STEPS = 15
+                TIME_STEPS = 24
                 if len(X_train_noisy) <= TIME_STEPS or len(X_val) <= TIME_STEPS: continue
-                train_generator = TimeseriesGenerator(X_train_noisy, y_train.values, length=TIME_STEPS, batch_size=16)
-                val_generator = TimeseriesGenerator(X_val, y_val.values, length=TIME_STEPS, batch_size=16)
+                train_generator = TimeseriesGenerator(X_train_noisy, y_train.values, length=TIME_STEPS, batch_size=32)
+                val_generator = TimeseriesGenerator(X_val, y_val.values, length=TIME_STEPS, batch_size=32)
                 early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
                 bilstm_model = create_bilstm_model(input_shape=(TIME_STEPS, X_train.shape[1]), num_classes=3)
                 bilstm_model.fit(train_generator, validation_data=val_generator, epochs=50, verbose=0, callbacks=[early_stopping])
