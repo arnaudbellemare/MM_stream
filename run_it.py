@@ -189,15 +189,33 @@ def create_autoencoder(input_dim, encoding_dim=8):
     return autoencoder, encoder
 
 def get_ewma_volatility(returns, lambda_param=0.89):
+    """
+    Calculates EWMA volatility with robust NaN handling.
+    """
     returns_squared = returns**2
     ewma_vol = pd.Series(index=returns.index, dtype=float)
-    ewma_vol.iloc[0] = np.sqrt(returns_squared.iloc[0])
-    for i in range(1, len(returns)):
-        ewma_vol.iloc[i] = np.sqrt(
-            lambda_param * ewma_vol.iloc[i-1]**2 +
-            (1 - lambda_param) * returns_squared.iloc[i]
-        )
-    return ewma_vol
+
+    # [FIX] Find the first valid return to avoid starting with NaN
+    first_valid_index = returns.first_valid_index()
+    if first_valid_index is None:
+        return ewma_vol # Return empty series if no returns exist
+
+    # [FIX] Initialize with the first valid (non-NaN) value
+    ewma_vol[first_valid_index] = np.sqrt(returns_squared[first_valid_index])
+
+    # [FIX] Iterate from the index *after* the first valid one
+    for i in range(returns.index.get_loc(first_valid_index) + 1, len(returns)):
+        prev_vol_sq = ewma_vol.iloc[i-1]**2
+        current_ret_sq = returns_squared.iloc[i]
+
+        # Ensure we don't propagate NaNs if they sneak in
+        if pd.notna(prev_vol_sq) and pd.notna(current_ret_sq):
+            ewma_vol.iloc[i] = np.sqrt(
+                lambda_param * prev_vol_sq +
+                (1 - lambda_param) * current_ret_sq
+            )
+            
+    return ewma_vol.ffill() # Forward fill any initial gaps
 
 def get_rogers_satchell_volatility(high, low, open_, close, window=20):
     log_ho = np.log(high / open_)
