@@ -187,7 +187,7 @@ def create_autoencoder(input_dim, encoding_dim=8):
     encoder = Model(input_layer, encoded)
     autoencoder.compile(optimizer='adam', loss='mean_squared_error')
     return autoencoder, encoder
-def robust_vol_calc(price, vol_days=35, annualized=False, timeframe='1d'):
+def robust_vol_calc(price, vol_days=35, annualized=True, timeframe='1d'):
     """
     Calculates robust, per-period or annualized volatility from a price series.
 
@@ -236,7 +236,7 @@ def robust_vol_calc(price, vol_days=35, annualized=False, timeframe='1d'):
     
 def ewmac_calc_vol(price, Lfast, Lslow, vol_days=35):
     # This call is now safe. robust_vol_calc returns a clean series.
-    vol = robust_vol_calc(price, vol_days=vol_days, annualized=False) 
+    vol = robust_vol_calc(price, vol_days=vol_days, annualized=True) 
     
     # The ewmac function no longer needs to call .ffill() on the vol series
     # because it's already clean.
