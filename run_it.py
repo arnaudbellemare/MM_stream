@@ -576,7 +576,8 @@ with tab3:
                 # --- [FIX] Calculate Breakout and EWMAC scores ---
                 breakout_series = breakout(df['close'], lookback=20, smooth=5)
                 breakout_score = breakout_series.iloc[-1] if not breakout_series.empty and pd.notna(breakout_series.iloc[-1]) else 0.0
-                ewmac_series = ewmac_calc_vol(df['close'], Lfast=32, Lslow=96)
+                ewmac_series = ewmac_calc_vol(df['close'], Lfast=32, Lslow=96) 
+                
                 ewmac_score = ewmac_series.iloc[-1] if not ewmac_series.empty and pd.notna(ewmac_series.iloc[-1]) else 0.0
 
                 results.append({
