@@ -337,27 +337,71 @@ with tab3:
             p_value = adfuller(diff_series, maxlag=1, regression='c', autolag=None)[1]
             if p_value <= p_value_threshold: return d
         return max_d
+        
+# --- Hybrid EWMA + Rogers-Satchell volatility functions for use in tab3 ---
 
-    def get_triple_barrier_labels_and_vol(high, low, close, lookahead_periods=5, vol_mult=1.5):
+    def get_ewma_volatility(returns, lambda_param=0.89):
+        returns_squared = returns**2
+        ewma_vol = pd.Series(index=returns.index, dtype=float)
+        ewma_vol.iloc[0] = np.sqrt(returns_squared.iloc[0])
+        for i in range(1, len(returns)):
+            ewma_vol.iloc[i] = np.sqrt(
+                lambda_param * ewma_vol.iloc[i-1]**2 +
+                (1 - lambda_param) * returns_squared.iloc[i]
+            )
+        return ewma_vol
+
+    def get_rogers_satchell_volatility(high, low, open_, close, window=20):
+        log_ho = np.log(high / open_)
+        log_lo = np.log(low / open_)
+        log_co = np.log(close / open_)
+        rs = log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)
+        return np.sqrt(rs.rolling(window=window).mean())
+
+    def get_hybrid_volatility(high, low, open_, close, lambda_param=0.89, rs_weight=0.3, window=20):
         returns = close.pct_change()
-        volatility = returns.rolling(20).std().fillna(method='bfill')
+        ewma_vol = get_ewma_volatility(returns, lambda_param)
+        rs_vol = get_rogers_satchell_volatility(high, low, open_, close, window=window)
+        hybrid_vol = (1 - rs_weight) * ewma_vol + rs_weight * rs_vol
+        return hybrid_vol.fillna(method='bfill')
+
+    def get_triple_barrier_labels_and_vol(
+            high, low, close, open_, lookahead_periods=25, vol_mult=1.5,
+            lambda_param=0.89, rs_weight=0.3, window=20
+        ):
+
+        volatility = get_hybrid_volatility(
+            high, low, open_, close, lambda_param=lambda_param, rs_weight=rs_weight, window=window
+        )
         labels = pd.Series(0, index=close.index)
         for i in range(len(close) - lookahead_periods):
-            entry_price = close.iloc[i]; vol = volatility.iloc[i]
-            if vol == 0: continue
-            tp_level = entry_price * (1 + vol_mult * vol); sl_level = entry_price * (1 - vol_mult * vol)
-            future_highs = high.iloc[i+1 : i+1+lookahead_periods]; future_lows = low.iloc[i+1 : i+1+lookahead_periods]
-            try: first_tp_hit = (future_highs >= tp_level).to_list().index(True)
-            except ValueError: first_tp_hit = None
-            try: first_sl_hit = (future_lows <= sl_level).to_list().index(True)
-            except ValueError: first_sl_hit = None
+            entry_price = close.iloc[i]
+            vol = volatility.iloc[i]
+            if pd.isna(vol) or vol == 0:
+                continue
+            tp_level = entry_price * (1 + vol_mult * vol)
+            sl_level = entry_price * (1 - vol_mult * vol)
+            future_highs = high.iloc[i+1 : i+1+lookahead_periods]
+            future_lows = low.iloc[i+1 : i+1+lookahead_periods]
+            try:
+                first_tp_hit = (future_highs >= tp_level).to_list().index(True)
+            except ValueError:
+                first_tp_hit = None
+            try:
+                first_sl_hit = (future_lows <= sl_level).to_list().index(True)
+            except ValueError:
+                first_sl_hit = None
             if first_tp_hit is not None and first_sl_hit is not None:
-                if first_tp_hit < first_sl_hit: labels.iloc[i] = 1
-                elif first_sl_hit < first_tp_hit: labels.iloc[i] = -1
-                else: labels.iloc[i] = 0
-            elif first_tp_hit is not None: labels.iloc[i] = 1
-            elif first_sl_hit is not None: labels.iloc[i] = -1
+                if first_tp_hit < first_sl_hit:
+                    labels.iloc[i] = 1
+                elif first_sl_hit < first_tp_hit:
+                    labels.iloc[i] = -1
+            elif first_tp_hit is not None:
+                labels.iloc[i] = 1
+            elif first_sl_hit is not None:
+                labels.iloc[i] = -1
         return labels, volatility
+
     
     # <<< NEW MODEL ARCHITECTURE WITH MORE UNITS >>>
     def create_optimized_bilstm_model(input_shape, num_classes, lstm_units):
