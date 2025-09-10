@@ -264,6 +264,9 @@ def clean_and_prepare_data(df_raw, symbol):
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
+# ==============================================================================
+# TAB 3: COMPREHENSIVE WATCHLIST (WITH HARDCODED OPTIMIZED PARAMETERS)
+# ==============================================================================
 with tab3:
     st.header("📈 Comprehensive Watchlist")
     st.markdown("""
@@ -355,15 +358,18 @@ with tab3:
             elif first_tp_hit is not None: labels.iloc[i] = 1
             elif first_sl_hit is not None: labels.iloc[i] = -1
         return labels, volatility
-
-    def create_bilstm_model(input_shape, num_classes):
+    
+    # <<< NEW MODEL ARCHITECTURE WITH MORE UNITS >>>
+    def create_optimized_bilstm_model(input_shape, num_classes, lstm_units):
         model = Sequential([
             Input(shape=input_shape),
-            Bidirectional(LSTM(units=32, return_sequences=False)),
-            Dense(16, activation='relu'),
+            Bidirectional(LSTM(units=lstm_units, return_sequences=False)),
+            Dense(int(lstm_units/2), activation='relu'),
             Dense(num_classes, activation='softmax')
         ])
-        model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+        model.compile(optimizer='adam', 
+                     loss='sparse_categorical_crossentropy', 
+                     metrics=['accuracy'])
         return model
 
     def breakout(price, lookback=10, smooth=None):
@@ -410,13 +416,12 @@ with tab3:
                 df_raw = fetch_data(symbol, timeframe, limit)
                 if df_raw.empty: continue
                 df = clean_and_prepare_data(df_raw, symbol)
-                if df.empty or len(df) < 5:
+                if df.empty or len(df) < 100:
                     st.warning(f"[{symbol}] Not enough data after cleaning. Skipping.")
                     continue
-                st.info(f"[{symbol}] Training new model on cleaned data...")
+                st.info(f"[{symbol}] Training new model with optimized parameters...")
                 
-                # Feature Engineering, Fractional Differencing, Autoencoder, Labeling...
-                # (This extensive block is condensed for clarity but remains unchanged)
+                # Feature Engineering...
                 df_model = df.copy()
                 df_model['bb_upper'], _, df_model['bb_lower'] = get_bollinger_bands(df_model['close'])
                 df_model['bb_dist_upper'] = df_model['bb_upper'] - df_model['close']
@@ -443,19 +448,27 @@ with tab3:
                 combined_features = pd.concat([features_df_stationarized, market_phase_dummies], axis=1)
                 features_df = combined_features.dropna()
                 if len(features_df) < 100: continue
+                
                 ae_scaler = MinMaxScaler()
                 features_scaled_ae = ae_scaler.fit_transform(features_df)
                 input_dim = features_scaled_ae.shape[1]
-                encoding_dim = max(2, int(np.ceil(input_dim / 2)))
-                autoencoder, encoder = create_autoencoder(input_dim, encoding_dim)
+                
+                # <<< HARDCODED OPTIMIZATION: Autoencoder >>>
+                best_encoding_dim = 32
+                autoencoder, encoder = create_autoencoder(input_dim, best_encoding_dim)
                 autoencoder.fit(features_scaled_ae, features_scaled_ae, epochs=50, batch_size=32, shuffle=False, verbose=0)
                 encoded_features = encoder.predict(features_scaled_ae, verbose=0)
-                encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index, columns=[f'AE_{j}' for j in range(encoding_dim)])
-                labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], lookahead_periods=5, vol_mult=1.5)
+                encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index, columns=[f'AE_{j}' for j in range(best_encoding_dim)])
+
+                # <<< HARDCODED OPTIMIZATION: Triple Barrier >>>
+                best_horizon = 25
+                labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], lookahead_periods=best_horizon, vol_mult=1.5)
+                
                 common_index = encoded_features_df.index.intersection(labels.index)
                 final_features = encoded_features_df.loc[common_index]
                 final_labels = labels.loc[common_index]
                 if len(final_features) < 100: continue
+                
                 y_mapped = final_labels.replace({-1: 0, 0: 1, 1: 2})
                 scaler = MinMaxScaler()
                 features_scaled = scaler.fit_transform(final_features)
@@ -464,13 +477,20 @@ with tab3:
                 y_train, y_val = y_mapped.iloc[:train_val_split_idx], y_mapped.iloc[train_val_split_idx:]
                 noise_factor = 0.01
                 X_train_noisy = X_train + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=X_train.shape)
-                TIME_STEPS = 15
+
+                # <<< HARDCODED OPTIMIZATION: BiLSTM Architecture >>>
+                TIME_STEPS = 25
+                LSTM_UNITS = 96
+                BATCH_SIZE = 48
+                
                 if len(X_train_noisy) <= TIME_STEPS or len(X_val) <= TIME_STEPS: continue
-                train_generator = TimeseriesGenerator(X_train_noisy, y_train.values, length=TIME_STEPS, batch_size=16)
-                val_generator = TimeseriesGenerator(X_val, y_val.values, length=TIME_STEPS, batch_size=16)
+                train_generator = TimeseriesGenerator(X_train_noisy, y_train.values, length=TIME_STEPS, batch_size=BATCH_SIZE)
+                val_generator = TimeseriesGenerator(X_val, y_val.values, length=TIME_STEPS, batch_size=BATCH_SIZE)
+                
                 early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
-                bilstm_model = create_bilstm_model(input_shape=(TIME_STEPS, X_train.shape[1]), num_classes=3)
+                bilstm_model = create_optimized_bilstm_model(input_shape=(TIME_STEPS, X_train.shape[1]), num_classes=3, lstm_units=LSTM_UNITS)
                 bilstm_model.fit(train_generator, validation_data=val_generator, epochs=50, verbose=0, callbacks=[early_stopping])
+                
                 latest_sequence_scaled = features_scaled[-TIME_STEPS:]
                 latest_sequence_reshaped = latest_sequence_scaled.reshape(1, TIME_STEPS, latest_sequence_scaled.shape[1])
                 pred_proba_all = bilstm_model.predict(latest_sequence_reshaped, verbose=0)[0]
@@ -502,8 +522,6 @@ with tab3:
                 accuracy = accuracy_score(gt, df['wv_label'])
                 res_mom_signal = generate_residual_momentum_factor(df['close'], market_df['close'])
                 res_mom_score = res_mom_signal.iloc[-1] if not res_mom_signal.empty and pd.notna(res_mom_signal.iloc[-1]) else 0.0
-
-                # --- [FIX] Calculate Breakout and EWMAC scores ---
                 breakout_series = breakout(df['close'], lookback=20, smooth=5)
                 breakout_score = breakout_series.iloc[-1] if not breakout_series.empty and pd.notna(breakout_series.iloc[-1]) else 0.0
                 ewmac_series = ewmac_calc_vol(df['close'], Lfast=32, Lslow=96)
@@ -545,7 +563,6 @@ with tab3:
                     df_display_formatted['Net BPS'] = df_display_formatted['Net BPS'].map('{:,.0f}'.format)
                     df_display_formatted['Wavelet Accuracy'] = df_display_formatted['Wavelet Accuracy'].map('{:.1%}'.format)
                     df_display_formatted['Residual Momentum'] = df_display_formatted['Residual Momentum'].map('{:+.2f}'.format)
-                    # --- [FIX] Add formatting for new columns ---
                     df_display_formatted['Breakout'] = df_display_formatted['Breakout'].map('{:+.2f}'.format)
                     df_display_formatted['EWMAC'] = df_display_formatted['EWMAC'].map('{:+.2f}'.format)
                     column_order = ['Token', 'BiLSTM Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias', 'Net BPS', 'Wavelet Accuracy', 'Residual Momentum', 'Breakout', 'EWMAC']
@@ -629,8 +646,7 @@ with tab3:
                     fig_ewmac_quadrant.update_yaxes(title_text="EWMAC Forecast", zeroline=False)
                     fig_ewmac_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
                     fig_ewmac_quadrant.update_layout(title_text="EWMAC Forecast vs. Residual Momentum", height=500, legend_title="Market Phase")
-                    st.plotly_chart(fig_ewmac_quadrant, use_container_width=True) 
-
+                    st.plotly_chart(fig_ewmac_quadrant, use_container_width=True)
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER (Unchanged)
 # ==============================================================================
