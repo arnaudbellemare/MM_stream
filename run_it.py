@@ -506,7 +506,7 @@ with tab3:
 
                 # <<< HARDCODED OPTIMIZATION (from Chart): Triple Barrier >>>
                 best_horizon = 24
-                labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], lookahead_periods=best_horizon, vol_mult=1.5)
+                labels, _ = get_triple_barrier_labels_and_vol(df['high'], df['low'], df['close'], df['open'],lookahead_periods=25, vol_mult=1.5)
                 
                 common_index = encoded_features_df.index.intersection(labels.index)
                 final_features = encoded_features_df.loc[common_index]
