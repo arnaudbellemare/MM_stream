@@ -188,10 +188,30 @@ def create_autoencoder(input_dim, encoding_dim=8):
     autoencoder.compile(optimizer='adam', loss='mean_squared_error')
     return autoencoder, encoder
 
-def rogers_satchell_volatility(data):
-    log_ho=np.log(data["high"]/data["open"]); log_lo=np.log(data["low"]/data["open"]); log_co=np.log(data["close"]/data["open"])
-    return np.sqrt(np.mean(log_ho*(log_ho-log_co)+log_lo*(log_lo-log_co)))
+def get_ewma_volatility(returns, lambda_param=0.89):
+    returns_squared = returns**2
+    ewma_vol = pd.Series(index=returns.index, dtype=float)
+    ewma_vol.iloc[0] = np.sqrt(returns_squared.iloc[0])
+    for i in range(1, len(returns)):
+        ewma_vol.iloc[i] = np.sqrt(
+            lambda_param * ewma_vol.iloc[i-1]**2 +
+            (1 - lambda_param) * returns_squared.iloc[i]
+        )
+    return ewma_vol
 
+def get_rogers_satchell_volatility(high, low, open_, close, window=20):
+    log_ho = np.log(high / open_)
+    log_lo = np.log(low / open_)
+    log_co = np.log(close / open_)
+    rs = log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)
+    return np.sqrt(rs.rolling(window=window).mean())
+
+def get_hybrid_volatility(high, low, open_, close, lambda_param=0.89, rs_weight=0.3, window=20):
+    returns = close.pct_change()
+    ewma_vol = get_ewma_volatility(returns, lambda_param)
+    rs_vol = get_rogers_satchell_volatility(high, low, open_, close, window=window)
+    hybrid_vol = (1 - rs_weight) * ewma_vol + rs_weight * rs_vol
+    return hybrid_vol.fillna(method='bfill')
 def auto_labeling(data, w):
     labels=np.zeros_like(data); FP=data[0]; x_H=data[0]; x_L=data[0]; Cid=0; FP_N=0
     for i,p in enumerate(data):
@@ -264,9 +284,6 @@ def clean_and_prepare_data(df_raw, symbol):
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
-# ==============================================================================
-# TAB 3: COMPREHENSIVE WATCHLIST (WITH CHART-OPTIMIZED PARAMETERS)
-# ==============================================================================
 with tab3:
     st.header("📈 Comprehensive Watchlist")
     st.markdown("""
@@ -275,7 +292,7 @@ with tab3:
     - **Statistical Metrics:** Includes rule-based momentum phase, wavelet-based performance, and residual momentum.
     """)
     st.sidebar.header("📈 Watchlist Configuration")
-    min_volume_wl = st.sidebar.number_input("Minimum 24h Quote Volume", value=100000, key="wl_min_vol")
+    min_volume_wl = st.sidebar.number_input("Minimum 24h Quote Volume", value=250000, key="wl_min_vol")
     data_limit_wl = st.sidebar.slider("Data Bars for Analysis", 500, 2000, 1500, key="wl_limit")
 
     # ==============================================================================
@@ -337,83 +354,36 @@ with tab3:
             p_value = adfuller(diff_series, maxlag=1, regression='c', autolag=None)[1]
             if p_value <= p_value_threshold: return d
         return max_d
-        
-# --- Hybrid EWMA + Rogers-Satchell volatility functions for use in tab3 ---
 
-    def get_ewma_volatility(returns, lambda_param=0.89):
-        returns_squared = returns**2
-        ewma_vol = pd.Series(index=returns.index, dtype=float)
-        ewma_vol.iloc[0] = np.sqrt(returns_squared.iloc[0])
-        for i in range(1, len(returns)):
-            ewma_vol.iloc[i] = np.sqrt(
-                lambda_param * ewma_vol.iloc[i-1]**2 +
-                (1 - lambda_param) * returns_squared.iloc[i]
-            )
-        return ewma_vol
-
-    def get_rogers_satchell_volatility(high, low, open_, close, window=20):
-        log_ho = np.log(high / open_)
-        log_lo = np.log(low / open_)
-        log_co = np.log(close / open_)
-        rs = log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)
-        return np.sqrt(rs.rolling(window=window).mean())
-
-    def get_hybrid_volatility(high, low, open_, close, lambda_param=0.89, rs_weight=0.3, window=20):
+    def get_triple_barrier_labels_and_vol(high, low, close, lookahead_periods=5, vol_mult=1.5):
         returns = close.pct_change()
-        ewma_vol = get_ewma_volatility(returns, lambda_param)
-        rs_vol = get_rogers_satchell_volatility(high, low, open_, close, window=window)
-        hybrid_vol = (1 - rs_weight) * ewma_vol + rs_weight * rs_vol
-        return hybrid_vol.fillna(method='bfill')
-
-    def get_triple_barrier_labels_and_vol(
-            high, low, close, open_, lookahead_periods=25, vol_mult=1.5,
-            lambda_param=0.89, rs_weight=0.3, window=20
-        ):
-
-        volatility = get_hybrid_volatility(
-            high, low, open_, close, lambda_param=lambda_param, rs_weight=rs_weight, window=window
-        )
+        volatility = returns.rolling(20).std().fillna(method='bfill')
         labels = pd.Series(0, index=close.index)
         for i in range(len(close) - lookahead_periods):
-            entry_price = close.iloc[i]
-            vol = volatility.iloc[i]
-            if pd.isna(vol) or vol == 0:
-                continue
-            tp_level = entry_price * (1 + vol_mult * vol)
-            sl_level = entry_price * (1 - vol_mult * vol)
-            future_highs = high.iloc[i+1 : i+1+lookahead_periods]
-            future_lows = low.iloc[i+1 : i+1+lookahead_periods]
-            try:
-                first_tp_hit = (future_highs >= tp_level).to_list().index(True)
-            except ValueError:
-                first_tp_hit = None
-            try:
-                first_sl_hit = (future_lows <= sl_level).to_list().index(True)
-            except ValueError:
-                first_sl_hit = None
+            entry_price = close.iloc[i]; vol = volatility.iloc[i]
+            if vol == 0: continue
+            tp_level = entry_price * (1 + vol_mult * vol); sl_level = entry_price * (1 - vol_mult * vol)
+            future_highs = high.iloc[i+1 : i+1+lookahead_periods]; future_lows = low.iloc[i+1 : i+1+lookahead_periods]
+            try: first_tp_hit = (future_highs >= tp_level).to_list().index(True)
+            except ValueError: first_tp_hit = None
+            try: first_sl_hit = (future_lows <= sl_level).to_list().index(True)
+            except ValueError: first_sl_hit = None
             if first_tp_hit is not None and first_sl_hit is not None:
-                if first_tp_hit < first_sl_hit:
-                    labels.iloc[i] = 1
-                elif first_sl_hit < first_tp_hit:
-                    labels.iloc[i] = -1
-            elif first_tp_hit is not None:
-                labels.iloc[i] = 1
-            elif first_sl_hit is not None:
-                labels.iloc[i] = -1
+                if first_tp_hit < first_sl_hit: labels.iloc[i] = 1
+                elif first_sl_hit < first_tp_hit: labels.iloc[i] = -1
+                else: labels.iloc[i] = 0
+            elif first_tp_hit is not None: labels.iloc[i] = 1
+            elif first_sl_hit is not None: labels.iloc[i] = -1
         return labels, volatility
 
-    
-    # <<< NEW MODEL ARCHITECTURE WITH MORE UNITS >>>
-    def create_optimized_bilstm_model(input_shape, num_classes, lstm_units):
+    def create_bilstm_model(input_shape, num_classes):
         model = Sequential([
             Input(shape=input_shape),
-            Bidirectional(LSTM(units=lstm_units, return_sequences=False)),
-            Dense(int(lstm_units/2), activation='relu'),
+            Bidirectional(LSTM(units=32, return_sequences=False)),
+            Dense(16, activation='relu'),
             Dense(num_classes, activation='softmax')
         ])
-        model.compile(optimizer='adam', 
-                     loss='sparse_categorical_crossentropy', 
-                     metrics=['accuracy'])
+        model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
         return model
 
     def breakout(price, lookback=10, smooth=None):
@@ -460,12 +430,13 @@ with tab3:
                 df_raw = fetch_data(symbol, timeframe, limit)
                 if df_raw.empty: continue
                 df = clean_and_prepare_data(df_raw, symbol)
-                if df.empty or len(df) < 100:
+                if df.empty or len(df) < 5:
                     st.warning(f"[{symbol}] Not enough data after cleaning. Skipping.")
                     continue
-                st.info(f"[{symbol}] Training new model with chart-optimized parameters...")
+                st.info(f"[{symbol}] Training new model on cleaned data...")
                 
-                # Feature Engineering...
+                # Feature Engineering, Fractional Differencing, Autoencoder, Labeling...
+                # (This extensive block is condensed for clarity but remains unchanged)
                 df_model = df.copy()
                 df_model['bb_upper'], _, df_model['bb_lower'] = get_bollinger_bands(df_model['close'])
                 df_model['bb_dist_upper'] = df_model['bb_upper'] - df_model['close']
@@ -492,27 +463,19 @@ with tab3:
                 combined_features = pd.concat([features_df_stationarized, market_phase_dummies], axis=1)
                 features_df = combined_features.dropna()
                 if len(features_df) < 100: continue
-                
                 ae_scaler = MinMaxScaler()
                 features_scaled_ae = ae_scaler.fit_transform(features_df)
                 input_dim = features_scaled_ae.shape[1]
-                
-                # <<< HARDCODED OPTIMIZATION (from Chart): Autoencoder >>>
-                best_encoding_dim = 24
-                autoencoder, encoder = create_autoencoder(input_dim, best_encoding_dim)
+                encoding_dim = max(2, int(np.ceil(input_dim / 2)))
+                autoencoder, encoder = create_autoencoder(input_dim, encoding_dim)
                 autoencoder.fit(features_scaled_ae, features_scaled_ae, epochs=50, batch_size=32, shuffle=False, verbose=0)
                 encoded_features = encoder.predict(features_scaled_ae, verbose=0)
-                encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index, columns=[f'AE_{j}' for j in range(best_encoding_dim)])
-
-                # <<< HARDCODED OPTIMIZATION (from Chart): Triple Barrier >>>
-                best_horizon = 24
-                labels, _ = get_triple_barrier_labels_and_vol(df['high'], df['low'], df['close'], df['open'],lookahead_periods=7, vol_mult=1.3)
-                
+                encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index, columns=[f'AE_{j}' for j in range(encoding_dim)])
+                labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], lookahead_periods=5, vol_mult=1.5)
                 common_index = encoded_features_df.index.intersection(labels.index)
                 final_features = encoded_features_df.loc[common_index]
                 final_labels = labels.loc[common_index]
                 if len(final_features) < 100: continue
-                
                 y_mapped = final_labels.replace({-1: 0, 0: 1, 1: 2})
                 scaler = MinMaxScaler()
                 features_scaled = scaler.fit_transform(final_features)
@@ -521,20 +484,13 @@ with tab3:
                 y_train, y_val = y_mapped.iloc[:train_val_split_idx], y_mapped.iloc[train_val_split_idx:]
                 noise_factor = 0.01
                 X_train_noisy = X_train + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=X_train.shape)
-
-                # <<< HARDCODED OPTIMIZATION (from Chart): BiLSTM Architecture >>>
-                TIME_STEPS = 7
-                LSTM_UNITS = 96
-                BATCH_SIZE = 16
-                
+                TIME_STEPS = 15
                 if len(X_train_noisy) <= TIME_STEPS or len(X_val) <= TIME_STEPS: continue
-                train_generator = TimeseriesGenerator(X_train_noisy, y_train.values, length=TIME_STEPS, batch_size=BATCH_SIZE)
-                val_generator = TimeseriesGenerator(X_val, y_val.values, length=TIME_STEPS, batch_size=BATCH_SIZE)
-                
+                train_generator = TimeseriesGenerator(X_train_noisy, y_train.values, length=TIME_STEPS, batch_size=16)
+                val_generator = TimeseriesGenerator(X_val, y_val.values, length=TIME_STEPS, batch_size=16)
                 early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
-                bilstm_model = create_optimized_bilstm_model(input_shape=(TIME_STEPS, X_train.shape[1]), num_classes=3, lstm_units=LSTM_UNITS)
+                bilstm_model = create_bilstm_model(input_shape=(TIME_STEPS, X_train.shape[1]), num_classes=3)
                 bilstm_model.fit(train_generator, validation_data=val_generator, epochs=50, verbose=0, callbacks=[early_stopping])
-                
                 latest_sequence_scaled = features_scaled[-TIME_STEPS:]
                 latest_sequence_reshaped = latest_sequence_scaled.reshape(1, TIME_STEPS, latest_sequence_scaled.shape[1])
                 pred_proba_all = bilstm_model.predict(latest_sequence_reshaped, verbose=0)[0]
@@ -566,6 +522,8 @@ with tab3:
                 accuracy = accuracy_score(gt, df['wv_label'])
                 res_mom_signal = generate_residual_momentum_factor(df['close'], market_df['close'])
                 res_mom_score = res_mom_signal.iloc[-1] if not res_mom_signal.empty and pd.notna(res_mom_signal.iloc[-1]) else 0.0
+
+                # --- [FIX] Calculate Breakout and EWMAC scores ---
                 breakout_series = breakout(df['close'], lookback=20, smooth=5)
                 breakout_score = breakout_series.iloc[-1] if not breakout_series.empty and pd.notna(breakout_series.iloc[-1]) else 0.0
                 ewmac_series = ewmac_calc_vol(df['close'], Lfast=32, Lslow=96)
@@ -607,6 +565,7 @@ with tab3:
                     df_display_formatted['Net BPS'] = df_display_formatted['Net BPS'].map('{:,.0f}'.format)
                     df_display_formatted['Wavelet Accuracy'] = df_display_formatted['Wavelet Accuracy'].map('{:.1%}'.format)
                     df_display_formatted['Residual Momentum'] = df_display_formatted['Residual Momentum'].map('{:+.2f}'.format)
+                    # --- [FIX] Add formatting for new columns ---
                     df_display_formatted['Breakout'] = df_display_formatted['Breakout'].map('{:+.2f}'.format)
                     df_display_formatted['EWMAC'] = df_display_formatted['EWMAC'].map('{:+.2f}'.format)
                     column_order = ['Token', 'BiLSTM Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias', 'Net BPS', 'Wavelet Accuracy', 'Residual Momentum', 'Breakout', 'EWMAC']
@@ -690,7 +649,8 @@ with tab3:
                     fig_ewmac_quadrant.update_yaxes(title_text="EWMAC Forecast", zeroline=False)
                     fig_ewmac_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
                     fig_ewmac_quadrant.update_layout(title_text="EWMAC Forecast vs. Residual Momentum", height=500, legend_title="Market Phase")
-                    st.plotly_chart(fig_ewmac_quadrant, use_container_width=True)
+                    st.plotly_chart(fig_ewmac_quadrant, use_container_width=True) 
+
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER (Unchanged)
 # ==============================================================================
