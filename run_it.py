@@ -243,9 +243,6 @@ def ewmac_calc_vol(price, Lfast, Lslow, vol_days=35):
     forecast = ewmac(price, vol, Lfast, Lslow)
     return forecast
 
-# And when you call it in your main loop:
-ewmac_series = ewmac_calc_vol(df['close'], Lfast=32, Lslow=96)
-ewmac_score = ewmac_series.iloc[-1] if not ewmac_series.empty and pd.notna(ewmac_series.iloc[-1]) else 0.0
 
 def get_rogers_satchell_volatility(high, low, open_, close, window=20):
     log_ho = np.log(high / open_)
