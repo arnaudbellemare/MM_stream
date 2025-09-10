@@ -506,7 +506,7 @@ with tab3:
 
                 # <<< HARDCODED OPTIMIZATION (from Chart): Triple Barrier >>>
                 best_horizon = 24
-                labels, _ = get_triple_barrier_labels_and_vol(df['high'], df['low'], df['close'], df['open'],lookahead_periods=25, vol_mult=1.5)
+                labels, _ = get_triple_barrier_labels_and_vol(df['high'], df['low'], df['close'], df['open'],lookahead_periods=7, vol_mult=1.3)
                 
                 common_index = encoded_features_df.index.intersection(labels.index)
                 final_features = encoded_features_df.loc[common_index]
@@ -523,9 +523,9 @@ with tab3:
                 X_train_noisy = X_train + noise_factor * np.random.normal(loc=0.0, scale=1.0, size=X_train.shape)
 
                 # <<< HARDCODED OPTIMIZATION (from Chart): BiLSTM Architecture >>>
-                TIME_STEPS = 25
+                TIME_STEPS = 7
                 LSTM_UNITS = 96
-                BATCH_SIZE = 32
+                BATCH_SIZE = 16
                 
                 if len(X_train_noisy) <= TIME_STEPS or len(X_val) <= TIME_STEPS: continue
                 train_generator = TimeseriesGenerator(X_train_noisy, y_train.values, length=TIME_STEPS, batch_size=BATCH_SIZE)
