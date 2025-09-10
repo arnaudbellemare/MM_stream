@@ -261,6 +261,9 @@ def clean_and_prepare_data(df_raw, symbol):
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
+# ==============================================================================
+# TAB 3: COMPREHENSIVE WATCHLIST
+# ==============================================================================
 with tab3:
     st.header("📈 Comprehensive Watchlist")
     st.markdown("""
@@ -626,7 +629,8 @@ with tab3:
                     fig_ewmac_quadrant.update_yaxes(title_text="EWMAC Forecast", zeroline=False)
                     fig_ewmac_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
                     fig_ewmac_quadrant.update_layout(title_text="EWMAC Forecast vs. Residual Momentum", height=500, legend_title="Market Phase")
-                    st.plotly_chart(fig_ewmac_quadrant, use_container_width=True)
+                    st.plotly_chart(fig_ewmac_quadrant, use_container_width=True) 
+
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER (Unchanged)
 # ==============================================================================
