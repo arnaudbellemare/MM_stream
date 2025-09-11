@@ -189,7 +189,7 @@ def create_autoencoder(input_dim, encoding_dim=8):
     return autoencoder, encoder
 
 # ==============================================================================
-# ROBUST VOLATILITY CALCULATION (AS REQUESTED)
+# ROBUST VOLATILITY CALCULATION
 # ==============================================================================
 def get_ewma_volatility(returns, lambda_param=0.89):
     """ (A) Calculates EWMA volatility. """
@@ -217,17 +217,26 @@ def get_rogers_satchell_volatility(high, low, open_, close, window=20):
     rs = log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)
     return np.sqrt(rs.rolling(window=window).mean()).ffill().bfill()
 
-def get_hybrid_volatility(high, low, open_, close, lambda_param=0.89, rs_weight=0.3, window=20):
-    """
-    (C) VERIFIED: This function correctly creates the robust hybrid volatility.
-    It combines the EWMA (time-based) and Rogers-Satchell (range-based) models.
-    """
-    returns = close.pct_change()
-    ewma_vol = get_ewma_volatility(returns, lambda_param)
-    rs_vol = get_rogers_satchell_volatility(high, low, open_, close, window=window)
-    # Combine the two volatility measures
-    hybrid_vol = (1 - rs_weight) * ewma_vol + rs_weight * rs_vol
-    return hybrid_vol.ffill().bfill()
+def get_hybrid_volatility(high: pd.Series, low: pd.Series, open_: pd.Series, close: pd.Series, blend_ratio: float = 20.0,long_term_span: int = 365) -> pd.Series:
+
+    # 1. Calculate the short-term hybrid fractional volatility
+    hybrid_vol_frac = get_hybrid_volatility(high, low, open_, close)
+
+    # 2. Calculate the long-term average of this hybrid volatility
+    long_term_hybrid_vol_frac = hybrid_vol_frac.ewm(span=long_term_span, adjust=False).mean()
+
+    # 3. Blend the short-term and long-term hybrid volatilities
+    w = blend_ratio / 100.0
+    blended_hybrid_vol_frac = (
+        (1.0 - w) * hybrid_vol_frac + 
+        w * long_term_hybrid_vol_frac.fillna(hybrid_vol_frac)
+    )
+
+    # 4. Convert the blended fractional volatility into price terms
+    # We use shifted values to avoid using forward-looking data
+    sigma_price = close.shift(1) * blended_hybrid_vol_frac.shift(1)
+    
+    return sigma_price.bfill() # Backfill any initial NaNs
 
 def robust_vol_calc(price, vol_days=35, annualized=True, timeframe='1d'):
     """
@@ -316,6 +325,103 @@ def clean_and_prepare_data(df_raw, symbol):
     return df
 
 # ==============================================================================
+# NEW ADAPTED FUNCTIONS FOR ADVANCED FORECASTING
+# ==============================================================================
+def calculate_stable_daily_volatility(daily_close: pd.Series, span: int = 25, blend_ratio: float = 20.0) -> pd.Series:
+    """
+    Calculates a stable, blended daily volatility in price terms, replicating the Pine Script logic.
+    This serves as a robust normalizer for other signals.
+
+    Args:
+        daily_close (pd.Series): A pandas Series of daily closing prices.
+        span (int): The lookback span for the EWMA calculations.
+        blend_ratio (float): The percentage weight to give to the long-term volatility.
+
+    Returns:
+        pd.Series: A pandas Series of the daily volatility, expressed in price terms.
+    """
+    # Calculate daily returns as a percentage
+    daily_ret_perc = daily_close.pct_change().fillna(0) * 100
+
+    # Calculate EWMA of returns
+    ewma_ret = daily_ret_perc.ewm(span=span, adjust=False).mean()
+
+    # Calculate exponentially weighted variance
+    deviation_sq = (daily_ret_perc - ewma_ret) ** 2
+    ewvar = deviation_sq.ewm(span=span, adjust=False).mean()
+    
+    # Calculate short-term and long-term daily volatility
+    sigma_day = np.sqrt(ewvar)
+    sigma_day_10y = sigma_day.ewm(span=2500, adjust=False).mean() # 10 years of trading days
+
+    # Blend the short-term and long-term volatilities
+    w = blend_ratio / 100.0
+    sigma_day_blend = ((1.0 - w) * sigma_day + w * sigma_day_10y.fillna(sigma_day))
+
+    # Convert the percentage volatility back into price terms
+    # We use shifted values to avoid using forward-looking data
+    sigma_price = daily_close.shift(1) * sigma_day_blend.shift(1) / 100.0
+    
+    return sigma_price.bfill() # Backfill any initial NaNs
+
+def calculate_continuous_forecast(df: pd.DataFrame, daily_sigma_price: pd.Series) -> (pd.Series, pd.Series, pd.Series):
+    """
+    Calculates a continuous, volatility-normalized, and capped forecast by combining
+    EWMAC trend and Breakout signals, as per the Pine Script logic.
+
+    Args:
+        df (pd.DataFrame): The DataFrame for a single asset, must contain a 'close' column.
+        daily_sigma_price (pd.Series): The pre-calculated stable daily volatility in price terms.
+
+    Returns:
+        tuple: A tuple containing:
+            - pd.Series: The final, continuous forecast signal.
+            - pd.Series: The EWMAC component of the forecast.
+            - pd.Series: The Breakout component of the forecast.
+    """
+    close = df['close']
+    fccap = 20.0
+    
+    # --- 1. EWMAC Trend Component ---
+    ewmac8 = close.ewm(span=8, adjust=False).mean() - close.ewm(span=32, adjust=False).mean()
+    ewmac16 = close.ewm(span=16, adjust=False).mean() - close.ewm(span=64, adjust=False).mean()
+    ewmac32 = close.ewm(span=32, adjust=False).mean() - close.ewm(span=128, adjust=False).mean()
+
+    # Normalize by daily volatility, apply scalars, and cap
+    ewmac8_norm = (ewmac8 / daily_sigma_price) * 5.95
+    ewmac16_norm = (ewmac16 / daily_sigma_price) * 4.1
+    ewmac32_norm = (ewmac32 / daily_sigma_price) * 2.79
+
+    # Combine the three scaled EWMAC signals
+    combined_ewmac = (ewmac8_norm.clip(-fccap, fccap) + 
+                      ewmac16_norm.clip(-fccap, fccap) + 
+                      ewmac32_norm.clip(-fccap, fccap)) / 3
+    
+    # Apply Forecast Diversity Multiplier (FDM) and cap
+    combined_ewmac_fdm = (combined_ewmac * 1.08).clip(-fccap, fccap)
+
+    # --- 2. Breakout (BO) Component ---
+    def smoothed_breakout(period):
+        high = close.rolling(window=period).max()
+        low = close.rolling(window=period).min()
+        raw_bo = 40 * (close - (high + low) / 2) / (high - low).replace(0, np.nan)
+        # Use an EMA with a span of period/4 for smoothing
+        return raw_bo.ewm(span=int(period / 4), adjust=False).mean()
+
+    bo40 = smoothed_breakout(40) * 0.70
+    bo80 = smoothed_breakout(80) * 0.73
+    bo160 = smoothed_breakout(160) * 0.74
+    
+    # Combine the three scaled Breakout signals
+    combined_bo = ((bo40 + bo80 + bo160) / 3) * 1.1
+
+    # --- 3. Final Blending ---
+    # Average the capped EWMAC trend component and the Breakout component
+    final_forecast = (combined_ewmac_fdm + combined_bo) / 2
+    
+    return final_forecast.fillna(0), combined_ewmac_fdm.fillna(0), combined_bo.fillna(0)
+
+# ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
 with tab3:
@@ -390,7 +496,7 @@ with tab3:
         return max_d
     
     # ==============================================================================
-    # TRIPLE BARRIER LABELING (AS REQUESTED)
+    # TRIPLE BARRIER LABELING
     # ==============================================================================
     def get_triple_barrier_labels_and_vol(high, low, close, open_, lookahead_periods=5, vol_mult=1.5, lambda_param=0.89, rs_weight=0.3, window=24):
         """
@@ -451,53 +557,6 @@ with tab3:
         model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
         return model
 
-    def breakout(price, lookback=10, smooth=None):
-        if smooth is None: smooth = max(int(lookback / 4.0), 1)
-        assert smooth < lookback
-        roll_max = price.rolling(lookback, min_periods=int(min(len(price), np.ceil(lookback / 2.0)))).max()
-        roll_min = price.rolling(lookback, min_periods=int(min(len(price), np.ceil(lookback / 2.0)))).min()
-        roll_mean = (roll_max + roll_min) / 2.0
-        output = 40.0 * ((price - roll_mean) / (roll_max - roll_min))
-        smoothed_output = output.ewm(span=smooth, min_periods=np.ceil(smooth / 2.0)).mean()
-        return smoothed_output
-
-    def robust_vol_calc(price, vol_days=35):
-        price_changes = price.diff()
-        vol = price_changes.rolling(window=vol_days, min_periods=max(2, int(vol_days/2))).std()
-        return vol
-
-    def ewmac(price, vol, Lfast, Lslow):
-        fast_ewma = price.ewm(span=Lfast, min_periods=1).mean()
-        slow_ewma = price.ewm(span=Lslow, min_periods=1).mean()
-        raw_ewmac = fast_ewma - slow_ewma
-        return raw_ewmac / vol.ffill()
-
-    def ewmac_calc_vol(price, Lfast, Lslow, vol_days=35):
-        vol = robust_vol_calc(price, vol_days)
-        forecast = ewmac(price, vol, Lfast, Lslow)
-        return forecast
-# ADD THIS NEW FUNCTION
-    def calculate_ewmac_forecast(price, volatility, Lfast, Lslow):
-
-    
-    # Calculate the fast and slow exponentially weighted moving averages of the price
-        fast_ewma = price.ewm(span=Lfast, min_periods=1).mean()
-        slow_ewma = price.ewm(span=Lslow, min_periods=1).mean()
-    
-    # Calculate the raw EWMAC signal (the difference between the fast and slow EMAs)
-        raw_ewmac = fast_ewma - slow_ewma
-    
-    # To prevent division-by-zero errors, replace any 0s in the volatility series
-    # with NaN and then forward-fill the gaps.
-        volatility_safe = volatility.replace(0, np.nan).ffill()
-    
-    # Normalize the raw EWMAC signal by dividing it by the safe volatility
-        normalized_ewmac = raw_ewmac / volatility_safe
-    
-    # Cap the final forecast to ensure its values are between -20 and 20
-        capped_forecast = normalized_ewmac.clip(lower=-20, upper=20)
-    
-        return capped_forecast
     # ==============================================================================
     # MAIN WATCHLIST GENERATION FUNCTION
     # ==============================================================================
@@ -557,14 +616,8 @@ with tab3:
                 encoded_features = encoder.predict(features_scaled_ae, verbose=0)
                 encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index, columns=[f'AE_{j}' for j in range(encoding_dim)])
                 
-                # CORRECT USAGE: Calling the triple barrier function with all required OHLC columns
                 labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], df_model['open'], lookahead_periods=24, vol_mult=1.5)
-                hybrid_vol = get_hybrid_volatility(
-                    high=df['high'],
-                    low=df['low'],
-                    open_=df['open'],
-                    close=df['close']
-                )
+
                 common_index = encoded_features_df.index.intersection(labels.index)
                 final_features = encoded_features_df.loc[common_index]
                 final_labels = labels.loc[common_index]
@@ -616,15 +669,20 @@ with tab3:
                 res_mom_signal = generate_residual_momentum_factor(df['close'], market_df['close'])
                 res_mom_score = res_mom_signal.iloc[-1] if not res_mom_signal.empty and pd.notna(res_mom_signal.iloc[-1]) else 0.0
 
-                breakout_series = breakout(df['close'], lookback=20, smooth=5)
+                # MODIFIED: Use the advanced, blended forecast calculation
+                stable_vol = calculate_stable_daily_volatility(df['close'])
+                final_forecast_series, ewmac_series, breakout_series = calculate_continuous_forecast(df, stable_vol)
+
                 breakout_score = breakout_series.iloc[-1] if not breakout_series.empty and pd.notna(breakout_series.iloc[-1]) else 0.0
-                ewmac_series = calculate_ewmac_forecast(price=df['close'], volatility=hybrid_vol, Lfast=32, Lslow=96)
                 ewmac_score = ewmac_series.iloc[-1] if not ewmac_series.empty and pd.notna(ewmac_series.iloc[-1]) else 0.0
+                combined_score = final_forecast_series.iloc[-1] if not final_forecast_series.empty and pd.notna(final_forecast_series.iloc[-1]) else 0.0
+                
                 results.append({
                     'Token': symbol, 'BiLSTM Signal': bilstm_signal, 'Confidence': confidence, 'Market Phase': market_phase,
                     'Bull/Bear Bias': bull_bear_bias, 'Net BPS': net_bps, 'Wavelet Accuracy': accuracy, 'Residual Momentum': res_mom_score,
                     'Breakout': breakout_score,
                     'EWMAC': ewmac_score,
+                    'Combined Forecast': combined_score,
                 })
             except Exception as e:
                 st.warning(f"Could not analyze {symbol}. Error: {e}")
@@ -658,7 +716,9 @@ with tab3:
                     df_display_formatted['Residual Momentum'] = df_display_formatted['Residual Momentum'].map('{:+.2f}'.format)
                     df_display_formatted['Breakout'] = df_display_formatted['Breakout'].map('{:+.2f}'.format)
                     df_display_formatted['EWMAC'] = df_display_formatted['EWMAC'].map('{:+.2f}'.format)
-                    column_order = ['Token', 'BiLSTM Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias', 'Net BPS', 'Wavelet Accuracy', 'Residual Momentum', 'Breakout', 'EWMAC']
+                    df_display_formatted['Combined Forecast'] = df_display_formatted['Combined Forecast'].map('{:+.2f}'.format)
+                    
+                    column_order = ['Token', 'BiLSTM Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias', 'Net BPS', 'Wavelet Accuracy', 'Residual Momentum', 'Breakout', 'EWMAC', 'Combined Forecast']
                     st.dataframe(df_display_formatted[column_order], use_container_width=True, hide_index=True)
                 
                 phase_colors = {'Bull': '#60a971', 'Bear': '#d6454f', 'Correction': '#f8a541', 'Rebound': '#55b6e6'}
