@@ -479,13 +479,25 @@ with tab3:
 # ADD THIS NEW FUNCTION
     def calculate_ewmac_forecast(price, volatility, Lfast, Lslow):
 
+    
+    # Calculate the fast and slow exponentially weighted moving averages of the price
         fast_ewma = price.ewm(span=Lfast, min_periods=1).mean()
         slow_ewma = price.ewm(span=Lslow, min_periods=1).mean()
     
-    # Ensure volatility series has no zeros to prevent division errors
+    # Calculate the raw EWMAC signal (the difference between the fast and slow EMAs)
+        raw_ewmac = fast_ewma - slow_ewma
+    
+    # To prevent division-by-zero errors, replace any 0s in the volatility series
+    # with NaN and then forward-fill the gaps.
         volatility_safe = volatility.replace(0, np.nan).ffill()
     
-        return (fast_ewma - slow_ewma) / volatility_safe
+    # Normalize the raw EWMAC signal by dividing it by the safe volatility
+        normalized_ewmac = raw_ewmac / volatility_safe
+    
+    # Cap the final forecast to ensure its values are between -20 and 20
+        capped_forecast = normalized_ewmac.clip(lower=-20, upper=20)
+    
+        return capped_forecast
     # ==============================================================================
     # MAIN WATCHLIST GENERATION FUNCTION
     # ==============================================================================
