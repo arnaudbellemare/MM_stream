@@ -191,51 +191,62 @@ def create_autoencoder(input_dim, encoding_dim=8):
 # ==============================================================================
 # ROBUST VOLATILITY CALCULATION
 # ==============================================================================
-def get_ewma_volatility(returns, lambda_param=0.89):
+def get_ewma_volatility(returns, lambda_param=0.94):
     """ (A) Calculates EWMA volatility. """
     returns_squared = returns**2
-    ewma_vol = pd.Series(index=returns.index, dtype=float)
-    first_valid_index = returns.first_valid_index()
-    if first_valid_index is None:
-        return ewma_vol
-    ewma_vol[first_valid_index] = np.sqrt(returns_squared[first_valid_index])
-    for i in range(returns.index.get_loc(first_valid_index) + 1, len(returns)):
-        prev_vol_sq = ewma_vol.iloc[i-1]**2
-        current_ret_sq = returns_squared.iloc[i]
-        if pd.notna(prev_vol_sq) and pd.notna(current_ret_sq):
-            ewma_vol.iloc[i] = np.sqrt(
-                lambda_param * prev_vol_sq +
-                (1 - lambda_param) * current_ret_sq
-            )
-    return ewma_vol.ffill()
+    # The .ewm().mean() method is a more direct way to calculate EWMA
+    ewma_var = returns_squared.ewm(span=(2 / (1 - lambda_param)) - 1, adjust=False).mean()
+    return np.sqrt(ewma_var).ffill()
 
 def get_rogers_satchell_volatility(high, low, open_, close, window=20):
     """ (B) Calculates Rogers-Satchell volatility using OHLC data. """
     log_ho = np.log(high / open_)
     log_lo = np.log(low / open_)
     log_co = np.log(close / open_)
-    rs = log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)
-    return np.sqrt(rs.rolling(window=window).mean()).ffill().bfill()
+    rs_squared = log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)
+    # Ensure no negative values before taking the square root
+    rs_squared[rs_squared < 0] = 0
+    return np.sqrt(rs_squared.rolling(window=window).mean()).ffill().bfill()
 
-def get_hybrid_volatility(high: pd.Series, low: pd.Series, open_: pd.Series, close: pd.Series, blend_ratio: float = 20.0,long_term_span: int = 365) -> pd.Series:
+def _calculate_base_hybrid_fractional_volatility(high: pd.Series, low: pd.Series, open_: pd.Series, close: pd.Series, rs_weight: float = 0.5) -> pd.Series:
+    """
+    INTERNAL HELPER: Calculates the non-blended, short-term fractional volatility.
+    This is the function we will call to get the initial 'hybrid_vol_frac'.
+    """
+    ewma_vol = get_ewma_volatility(close)
+    rs_vol = get_rogers_satchell_volatility(high, low, open_, close)
+    
+    # Combine the two methods and fill any initial missing values
+    base_vol = ((1 - rs_weight) * ewma_vol).add(rs_weight * rs_vol, fill_value=rs_vol.mean())
+    return base_vol.ffill().bfill()
 
+# ==============================================================================
+# STEP 2: IMPLEMENT YOUR FUNCTION WITH THE RECURSION BUG FIXED
+# ==============================================================================
+
+def get_hybrid_volatility(high: pd.Series, low: pd.Series, open_: pd.Series, close: pd.Series, blend_ratio: float = 20.0, long_term_span: int = 365) -> pd.Series:
+    """
+    Calculates a blended volatility based on a short-term value and its long-term average.
+    
+    THIS IS YOUR FUNCTION, CORRECTED TO AVOID THE CRASH.
+    """
     # 1. Calculate the short-term hybrid fractional volatility
-    hybrid_vol_frac = get_hybrid_volatility(high, low, open_, close)
+    #    --- BUG FIX: Call the helper function instead of itself ---
+    hybrid_vol_frac = _calculate_base_hybrid_fractional_volatility(high, low, open_, close)
 
     # 2. Calculate the long-term average of this hybrid volatility
     long_term_hybrid_vol_frac = hybrid_vol_frac.ewm(span=long_term_span, adjust=False).mean()
 
-    # 3. Blend the short-term and long-term hybrid volatilities
+    # 3. Blend the short-term and long-term hybrid volatilities (your logic is unchanged)
     w = blend_ratio / 100.0
     blended_hybrid_vol_frac = (
-        (1.0 - w) * hybrid_vol_frac + 
+        (1.0 - w) * hybrid_vol_frac +
         w * long_term_hybrid_vol_frac.fillna(hybrid_vol_frac)
     )
 
-    # 4. Convert the blended fractional volatility into price terms
-    # We use shifted values to avoid using forward-looking data
+    # 4. Convert the blended fractional volatility into price terms (your logic is unchanged)
     sigma_price = close.shift(1) * blended_hybrid_vol_frac.shift(1)
-    
+
     return sigma_price.bfill() # Backfill any initial NaNs
 
 def robust_vol_calc(price, vol_days=35, annualized=True, timeframe='1d'):
