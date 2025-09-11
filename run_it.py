@@ -509,52 +509,53 @@ with tab3:
     # ==============================================================================
     # TRIPLE BARRIER LABELING
     # ==============================================================================
-    def get_triple_barrier_labels_and_vol(high, low, close, open_, lookahead_periods=5, vol_mult=1.5, lambda_param=0.89, rs_weight=0.3, window=24):
-        """
-        VERIFIED: This function correctly generates labels for the triple-barrier method.
-        1. It calls and uses the robust 'get_hybrid_volatility' function to set dynamic barriers.
-        2. It correctly identifies the first barrier touch (path-dependent).
-        """
-        # STEP 1: Calculate volatility using the robust hybrid method.
-        volatility = get_hybrid_volatility(high, low, open_, close, lambda_param, rs_weight, window)
+# ==============================================================================
+# CORRECTED TRIPLE BARRIER FUNCTION (REPLACE THE OLD ONE WITH THIS)
+# ==============================================================================
+
+    def get_triple_barrier_labels_and_vol(high, low, close, open_, lookahead_periods=24, vol_mult=1.5, rs_weight: float = 0.5, window=35):
+
+    # STEP 1: Calculate the base fractional volatility.
+    # THIS IS THE FIX. We call your internal helper function which gives us the
+    # fractional volatility needed to set the barriers correctly.
+        volatility = _calculate_base_hybrid_fractional_volatility(
+            high, low, open_, close, rs_weight=rs_weight
+        )
 
         labels = pd.Series(0, index=close.index)
         for i in range(len(close) - lookahead_periods):
             entry_price = close.iloc[i]
-            vol = volatility.iloc[i]
+            vol = volatility.iloc[i] # This is now the correct fractional volatility
 
-            # Skip if volatility is zero or NaN
             if pd.isna(vol) or vol == 0: continue
 
-            # STEP 2: Set dynamic profit-take and stop-loss levels based on volatility.
+        # STEP 2: Set dynamic profit-take and stop-loss levels based on volatility.
             tp_level = entry_price * (1 + vol_mult * vol)
             sl_level = entry_price * (1 - vol_mult * vol)
 
             future_highs = high.iloc[i+1 : i+1+lookahead_periods]
             future_lows = low.iloc[i+1 : i+1+lookahead_periods]
 
-            # STEP 3: Determine which barrier was hit first.
+        # STEP 3: Determine which barrier was hit first.
             try:
-                first_tp_hit_index = (future_highs >= tp_level).to_list().index(True)
-            except ValueError:
-                first_tp_hit_index = None
+            # More robust way to find the first touch index
+                first_tp_hit_time = future_highs[future_highs >= tp_level].index[0]
+            except IndexError:
+                first_tp_hit_time = None
 
             try:
-                first_sl_hit_index = (future_lows <= sl_level).to_list().index(True)
-            except ValueError:
-                first_sl_hit_index = None
+                first_sl_hit_time = future_lows[future_lows <= sl_level].index[0]
+            except IndexError:
+                first_sl_hit_time = None
 
-            # Assign label based on the first barrier touch
-            if first_tp_hit_index is not None and first_sl_hit_index is not None:
-                if first_tp_hit_index < first_sl_hit_index:
-                    labels.iloc[i] = 1  # Profit-take hit first
-                else:
-                    labels.iloc[i] = -1 # Stop-loss hit first
-            elif first_tp_hit_index is not None:
-                labels.iloc[i] = 1 # Only profit-take was hit
-            elif first_sl_hit_index is not None:
-                labels.iloc[i] = -1 # Only stop-loss was hit
-            # If neither is hit, the label remains 0 (default)
+        # Assign label based on the first barrier touch
+            if first_tp_hit_time and first_sl_hit_time:
+                labels.iloc[i] = 1 if first_tp_hit_time < first_sl_hit_time else -1
+            elif first_tp_hit_time:
+                labels.iloc[i] = 1
+            elif first_sl_hit_time:
+                labels.iloc[i] = -1
+        # If neither is hit, the label remains 0
 
         return labels, volatility
 
