@@ -537,7 +537,7 @@ with tab3:
                 encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index, columns=[f'AE_{j}' for j in range(encoding_dim)])
                 
                 # CORRECT USAGE: Calling the triple barrier function with all required OHLC columns
-                labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], df_model['open'], lookahead_periods=5, vol_mult=1.5)
+                labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], df_model['open'], lookahead_periods=24, vol_mult=1.5)
                 
                 common_index = encoded_features_df.index.intersection(labels.index)
                 final_features = encoded_features_df.loc[common_index]
