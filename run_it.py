@@ -191,63 +191,43 @@ def create_autoencoder(input_dim, encoding_dim=8):
 # ==============================================================================
 # ROBUST VOLATILITY CALCULATION
 # ==============================================================================
-def get_ewma_volatility(returns, lambda_param=0.94):
+def get_ewma_volatility(returns, lambda_param=0.89):
     """ (A) Calculates EWMA volatility. """
     returns_squared = returns**2
-    # The .ewm().mean() method is a more direct way to calculate EWMA
-    ewma_var = returns_squared.ewm(span=(2 / (1 - lambda_param)) - 1, adjust=False).mean()
-    return np.sqrt(ewma_var).ffill()
+    ewma_vol = pd.Series(index=returns.index, dtype=float)
+    first_valid_index = returns.first_valid_index()
+    if first_valid_index is None:
+        return ewma_vol
+    ewma_vol[first_valid_index] = np.sqrt(returns_squared[first_valid_index])
+    for i in range(returns.index.get_loc(first_valid_index) + 1, len(returns)):
+        prev_vol_sq = ewma_vol.iloc[i-1]**2
+        current_ret_sq = returns_squared.iloc[i]
+        if pd.notna(prev_vol_sq) and pd.notna(current_ret_sq):
+            ewma_vol.iloc[i] = np.sqrt(
+                lambda_param * prev_vol_sq +
+                (1 - lambda_param) * current_ret_sq
+            )
+    return ewma_vol.ffill()
 
 def get_rogers_satchell_volatility(high, low, open_, close, window=20):
     """ (B) Calculates Rogers-Satchell volatility using OHLC data. """
     log_ho = np.log(high / open_)
     log_lo = np.log(low / open_)
     log_co = np.log(close / open_)
-    rs_squared = log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)
-    # Ensure no negative values before taking the square root
-    rs_squared[rs_squared < 0] = 0
-    return np.sqrt(rs_squared.rolling(window=window).mean()).ffill().bfill()
+    rs = log_ho * (log_ho - log_co) + log_lo * (log_lo - log_co)
+    return np.sqrt(rs.rolling(window=window).mean()).ffill().bfill()
 
-def _calculate_base_hybrid_fractional_volatility(high: pd.Series, low: pd.Series, open_: pd.Series, close: pd.Series, rs_weight: float = 0.5) -> pd.Series:
+def get_hybrid_volatility(high, low, open_, close, lambda_param=0.89, rs_weight=0.3, window=20):
     """
-    INTERNAL HELPER: Calculates the non-blended, short-term fractional volatility.
-    This is the function we will call to get the initial 'hybrid_vol_frac'.
+    (C) VERIFIED: This function correctly creates the robust hybrid volatility.
+    It combines the EWMA (time-based) and Rogers-Satchell (range-based) models.
     """
-    ewma_vol = get_ewma_volatility(close)
-    rs_vol = get_rogers_satchell_volatility(high, low, open_, close)
-    
-    # Combine the two methods and fill any initial missing values
-    base_vol = ((1 - rs_weight) * ewma_vol).add(rs_weight * rs_vol, fill_value=rs_vol.mean())
-    return base_vol.ffill().bfill()
-
-# ==============================================================================
-# STEP 2: IMPLEMENT YOUR FUNCTION WITH THE RECURSION BUG FIXED
-# ==============================================================================
-
-def get_hybrid_volatility(high: pd.Series, low: pd.Series, open_: pd.Series, close: pd.Series, blend_ratio: float = 20.0, long_term_span: int = 365) -> pd.Series:
-    """
-    Calculates a blended volatility based on a short-term value and its long-term average.
-    
-    THIS IS YOUR FUNCTION, CORRECTED TO AVOID THE CRASH.
-    """
-    # 1. Calculate the short-term hybrid fractional volatility
-    #    --- BUG FIX: Call the helper function instead of itself ---
-    hybrid_vol_frac = _calculate_base_hybrid_fractional_volatility(high, low, open_, close)
-
-    # 2. Calculate the long-term average of this hybrid volatility
-    long_term_hybrid_vol_frac = hybrid_vol_frac.ewm(span=long_term_span, adjust=False).mean()
-
-    # 3. Blend the short-term and long-term hybrid volatilities (your logic is unchanged)
-    w = blend_ratio / 100.0
-    blended_hybrid_vol_frac = (
-        (1.0 - w) * hybrid_vol_frac +
-        w * long_term_hybrid_vol_frac.fillna(hybrid_vol_frac)
-    )
-
-    # 4. Convert the blended fractional volatility into price terms (your logic is unchanged)
-    sigma_price = close.shift(1) * blended_hybrid_vol_frac.shift(1)
-
-    return sigma_price.bfill() # Backfill any initial NaNs
+    returns = close.pct_change()
+    ewma_vol = get_ewma_volatility(returns, lambda_param)
+    rs_vol = get_rogers_satchell_volatility(high, low, open_, close, window=window)
+    # Combine the two volatility measures
+    hybrid_vol = (1 - rs_weight) * ewma_vol + rs_weight * rs_vol
+    return hybrid_vol.ffill().bfill()
 
 def robust_vol_calc(price, vol_days=35, annualized=True, timeframe='1d'):
     """
@@ -336,103 +316,6 @@ def clean_and_prepare_data(df_raw, symbol):
     return df
 
 # ==============================================================================
-# NEW ADAPTED FUNCTIONS FOR ADVANCED FORECASTING
-# ==============================================================================
-def calculate_stable_daily_volatility(daily_close: pd.Series, span: int = 25, blend_ratio: float = 20.0) -> pd.Series:
-    """
-    Calculates a stable, blended daily volatility in price terms, replicating the Pine Script logic.
-    This serves as a robust normalizer for other signals.
-
-    Args:
-        daily_close (pd.Series): A pandas Series of daily closing prices.
-        span (int): The lookback span for the EWMA calculations.
-        blend_ratio (float): The percentage weight to give to the long-term volatility.
-
-    Returns:
-        pd.Series: A pandas Series of the daily volatility, expressed in price terms.
-    """
-    # Calculate daily returns as a percentage
-    daily_ret_perc = daily_close.pct_change().fillna(0) * 100
-
-    # Calculate EWMA of returns
-    ewma_ret = daily_ret_perc.ewm(span=span, adjust=False).mean()
-
-    # Calculate exponentially weighted variance
-    deviation_sq = (daily_ret_perc - ewma_ret) ** 2
-    ewvar = deviation_sq.ewm(span=span, adjust=False).mean()
-    
-    # Calculate short-term and long-term daily volatility
-    sigma_day = np.sqrt(ewvar)
-    sigma_day_10y = sigma_day.ewm(span=2500, adjust=False).mean() # 10 years of trading days
-
-    # Blend the short-term and long-term volatilities
-    w = blend_ratio / 100.0
-    sigma_day_blend = ((1.0 - w) * sigma_day + w * sigma_day_10y.fillna(sigma_day))
-
-    # Convert the percentage volatility back into price terms
-    # We use shifted values to avoid using forward-looking data
-    sigma_price = daily_close.shift(1) * sigma_day_blend.shift(1) / 100.0
-    
-    return sigma_price.bfill() # Backfill any initial NaNs
-
-def calculate_continuous_forecast(df: pd.DataFrame, daily_sigma_price: pd.Series) -> (pd.Series, pd.Series, pd.Series):
-    """
-    Calculates a continuous, volatility-normalized, and capped forecast by combining
-    EWMAC trend and Breakout signals, as per the Pine Script logic.
-
-    Args:
-        df (pd.DataFrame): The DataFrame for a single asset, must contain a 'close' column.
-        daily_sigma_price (pd.Series): The pre-calculated stable daily volatility in price terms.
-
-    Returns:
-        tuple: A tuple containing:
-            - pd.Series: The final, continuous forecast signal.
-            - pd.Series: The EWMAC component of the forecast.
-            - pd.Series: The Breakout component of the forecast.
-    """
-    close = df['close']
-    fccap = 20.0
-    
-    # --- 1. EWMAC Trend Component ---
-    ewmac8 = close.ewm(span=8, adjust=False).mean() - close.ewm(span=32, adjust=False).mean()
-    ewmac16 = close.ewm(span=16, adjust=False).mean() - close.ewm(span=64, adjust=False).mean()
-    ewmac32 = close.ewm(span=32, adjust=False).mean() - close.ewm(span=128, adjust=False).mean()
-
-    # Normalize by daily volatility, apply scalars, and cap
-    ewmac8_norm = (ewmac8 / daily_sigma_price) * 5.95
-    ewmac16_norm = (ewmac16 / daily_sigma_price) * 4.1
-    ewmac32_norm = (ewmac32 / daily_sigma_price) * 2.79
-
-    # Combine the three scaled EWMAC signals
-    combined_ewmac = (ewmac8_norm.clip(-fccap, fccap) + 
-                      ewmac16_norm.clip(-fccap, fccap) + 
-                      ewmac32_norm.clip(-fccap, fccap)) / 3
-    
-    # Apply Forecast Diversity Multiplier (FDM) and cap
-    combined_ewmac_fdm = (combined_ewmac * 1.08).clip(-fccap, fccap)
-
-    # --- 2. Breakout (BO) Component ---
-    def smoothed_breakout(period):
-        high = close.rolling(window=period).max()
-        low = close.rolling(window=period).min()
-        raw_bo = 40 * (close - (high + low) / 2) / (high - low).replace(0, np.nan)
-        # Use an EMA with a span of period/4 for smoothing
-        return raw_bo.ewm(span=int(period / 4), adjust=False).mean()
-
-    bo40 = smoothed_breakout(40) * 0.70
-    bo80 = smoothed_breakout(80) * 0.73
-    bo160 = smoothed_breakout(160) * 0.74
-    
-    # Combine the three scaled Breakout signals
-    combined_bo = ((bo40 + bo80 + bo160) / 3) * 1.1
-
-    # --- 3. Final Blending ---
-    # Average the capped EWMAC trend component and the Breakout component
-    final_forecast = (combined_ewmac_fdm + combined_bo) / 2
-    
-    return final_forecast.fillna(0), combined_ewmac_fdm.fillna(0), combined_bo.fillna(0)
-
-# ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
 with tab3:
@@ -505,57 +388,56 @@ with tab3:
             p_value = adfuller(diff_series, maxlag=1, regression='c', autolag=None)[1]
             if p_value <= p_value_threshold: return d
         return max_d
-    
+
     # ==============================================================================
     # TRIPLE BARRIER LABELING
     # ==============================================================================
-# ==============================================================================
-# CORRECTED TRIPLE BARRIER FUNCTION (REPLACE THE OLD ONE WITH THIS)
-# ==============================================================================
-
-    def get_triple_barrier_labels_and_vol(high, low, close, open_, lookahead_periods=24, vol_mult=1.5, rs_weight: float = 0.5, window=35):
-
-    # STEP 1: Calculate the base fractional volatility.
-    # THIS IS THE FIX. We call your internal helper function which gives us the
-    # fractional volatility needed to set the barriers correctly.
-        volatility = _calculate_base_hybrid_fractional_volatility(
-            high, low, open_, close, rs_weight=rs_weight
-        )
+    def get_triple_barrier_labels_and_vol(high, low, close, open_, lookahead_periods=5, vol_mult=1.5, lambda_param=0.89, rs_weight=0.3, window=24):
+        """
+        VERIFIED: This function correctly generates labels for the triple-barrier method.
+        1. It calls and uses the robust 'get_hybrid_volatility' function to set dynamic barriers.
+        2. It correctly identifies the first barrier touch (path-dependent).
+        """
+        # STEP 1: Calculate volatility using the robust hybrid method.
+        volatility = get_hybrid_volatility(high, low, open_, close, lambda_param, rs_weight, window)
 
         labels = pd.Series(0, index=close.index)
         for i in range(len(close) - lookahead_periods):
             entry_price = close.iloc[i]
-            vol = volatility.iloc[i] # This is now the correct fractional volatility
+            vol = volatility.iloc[i]
 
+            # Skip if volatility is zero or NaN
             if pd.isna(vol) or vol == 0: continue
 
-        # STEP 2: Set dynamic profit-take and stop-loss levels based on volatility.
+            # STEP 2: Set dynamic profit-take and stop-loss levels based on volatility.
             tp_level = entry_price * (1 + vol_mult * vol)
             sl_level = entry_price * (1 - vol_mult * vol)
 
             future_highs = high.iloc[i+1 : i+1+lookahead_periods]
             future_lows = low.iloc[i+1 : i+1+lookahead_periods]
 
-        # STEP 3: Determine which barrier was hit first.
+            # STEP 3: Determine which barrier was hit first.
             try:
-            # More robust way to find the first touch index
-                first_tp_hit_time = future_highs[future_highs >= tp_level].index[0]
-            except IndexError:
-                first_tp_hit_time = None
+                first_tp_hit_index = (future_highs >= tp_level).to_list().index(True)
+            except ValueError:
+                first_tp_hit_index = None
 
             try:
-                first_sl_hit_time = future_lows[future_lows <= sl_level].index[0]
-            except IndexError:
-                first_sl_hit_time = None
+                first_sl_hit_index = (future_lows <= sl_level).to_list().index(True)
+            except ValueError:
+                first_sl_hit_index = None
 
-        # Assign label based on the first barrier touch
-            if first_tp_hit_time and first_sl_hit_time:
-                labels.iloc[i] = 1 if first_tp_hit_time < first_sl_hit_time else -1
-            elif first_tp_hit_time:
-                labels.iloc[i] = 1
-            elif first_sl_hit_time:
-                labels.iloc[i] = -1
-        # If neither is hit, the label remains 0
+            # Assign label based on the first barrier touch
+            if first_tp_hit_index is not None and first_sl_hit_index is not None:
+                if first_tp_hit_index < first_sl_hit_index:
+                    labels.iloc[i] = 1  # Profit-take hit first
+                else:
+                    labels.iloc[i] = -1 # Stop-loss hit first
+            elif first_tp_hit_index is not None:
+                labels.iloc[i] = 1 # Only profit-take was hit
+            elif first_sl_hit_index is not None:
+                labels.iloc[i] = -1 # Only stop-loss was hit
+            # If neither is hit, the label remains 0 (default)
 
         return labels, volatility
 
@@ -568,6 +450,85 @@ with tab3:
         ])
         model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
         return model
+
+    # ==============================================================================
+    # NEW ADAPTED FUNCTIONS FOR ADVANCED FORECASTING
+    # ==============================================================================
+    def calculate_stable_daily_volatility(daily_close: pd.Series, span: int = 25, blend_ratio: float = 20.0) -> pd.Series:
+        """
+        Calculates a stable, blended daily volatility in price terms, replicating the Pine Script logic.
+        This serves as a robust normalizer for other signals.
+        """
+        # Calculate daily returns as a percentage
+        daily_ret_perc = daily_close.pct_change().fillna(0) * 100
+
+        # Calculate EWMA of returns
+        ewma_ret = daily_ret_perc.ewm(span=span, adjust=False).mean()
+
+        # Calculate exponentially weighted variance
+        deviation_sq = (daily_ret_perc - ewma_ret) ** 2
+        ewvar = deviation_sq.ewm(span=span, adjust=False).mean()
+
+        # Calculate short-term and long-term daily volatility
+        sigma_day = np.sqrt(ewvar)
+        sigma_day_10y = sigma_day.ewm(span=2500, adjust=False).mean() # 10 years of trading days
+
+        # Blend the short-term and long-term volatilities
+        w = blend_ratio / 100.0
+        sigma_day_blend = ((1.0 - w) * sigma_day + w * sigma_day_10y.fillna(sigma_day))
+
+        # Convert the percentage volatility back into price terms
+        # We use shifted values to avoid using forward-looking data
+        sigma_price = daily_close.shift(1) * sigma_day_blend.shift(1) / 100.0
+
+        return sigma_price.bfill() # Backfill any initial NaNs
+
+    def calculate_continuous_forecast(df: pd.DataFrame, daily_sigma_price: pd.Series) -> (pd.Series, pd.Series, pd.Series):
+        """
+        Calculates a continuous, volatility-normalized, and capped forecast by combining
+        EWMAC trend and Breakout signals, as per the Pine Script logic.
+        """
+        close = df['close']
+        fccap = 20.0
+
+        # --- 1. EWMAC Trend Component ---
+        ewmac8 = close.ewm(span=8, adjust=False).mean() - close.ewm(span=32, adjust=False).mean()
+        ewmac16 = close.ewm(span=16, adjust=False).mean() - close.ewm(span=64, adjust=False).mean()
+        ewmac32 = close.ewm(span=32, adjust=False).mean() - close.ewm(span=128, adjust=False).mean()
+
+        # Normalize by daily volatility, apply scalars, and cap
+        ewmac8_norm = (ewmac8 / daily_sigma_price) * 5.95
+        ewmac16_norm = (ewmac16 / daily_sigma_price) * 4.1
+        ewmac32_norm = (ewmac32 / daily_sigma_price) * 2.79
+
+        # Combine the three scaled EWMAC signals
+        combined_ewmac = (ewmac8_norm.clip(-fccap, fccap) +
+                          ewmac16_norm.clip(-fccap, fccap) +
+                          ewmac32_norm.clip(-fccap, fccap)) / 3
+
+        # Apply Forecast Diversity Multiplier (FDM) and cap
+        combined_ewmac_fdm = (combined_ewmac * 1.08).clip(-fccap, fccap)
+
+        # --- 2. Breakout (BO) Component ---
+        def smoothed_breakout(period):
+            high = close.rolling(window=period).max()
+            low = close.rolling(window=period).min()
+            raw_bo = 40 * (close - (high + low) / 2) / (high - low).replace(0, np.nan)
+            # Use an EMA with a span of period/4 for smoothing
+            return raw_bo.ewm(span=int(period / 4), adjust=False).mean()
+
+        bo40 = smoothed_breakout(40) * 0.70
+        bo80 = smoothed_breakout(80) * 0.73
+        bo160 = smoothed_breakout(160) * 0.74
+
+        # Combine the three scaled Breakout signals
+        combined_bo = ((bo40 + bo80 + bo160) / 3) * 1.1
+
+        # --- 3. Final Blending ---
+        # Average the capped EWMAC trend component and the Breakout component
+        final_forecast = (combined_ewmac_fdm + combined_bo) / 2
+
+        return final_forecast.fillna(0), combined_ewmac_fdm.fillna(0), combined_bo.fillna(0)
 
     # ==============================================================================
     # MAIN WATCHLIST GENERATION FUNCTION
@@ -627,9 +588,9 @@ with tab3:
                 autoencoder.fit(features_scaled_ae, features_scaled_ae, epochs=50, batch_size=32, shuffle=False, verbose=0)
                 encoded_features = encoder.predict(features_scaled_ae, verbose=0)
                 encoded_features_df = pd.DataFrame(encoded_features, index=features_df.index, columns=[f'AE_{j}' for j in range(encoding_dim)])
-                
-                labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], df_model['open'], lookahead_periods=24, vol_mult=1.5)
 
+                # CORRECT USAGE: Calling the triple barrier function with all required OHLC columns
+                labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], df_model['open'], lookahead_periods=24, vol_mult=1.5)
                 common_index = encoded_features_df.index.intersection(labels.index)
                 final_features = encoded_features_df.loc[common_index]
                 final_labels = labels.loc[common_index]
@@ -658,7 +619,7 @@ with tab3:
                 pred_code = reverse_map[pred_mapped_code]
                 signal_map = {1: "Buy", -1: "Sell", 0: "Hold"}
                 bilstm_signal = signal_map.get(pred_code, "Hold")
-                
+
                 # Other Metrics Calculation
                 market_phase = df_model['market_phase_cat'].iloc[-1]
                 close_prices = df["close"].values
@@ -688,22 +649,22 @@ with tab3:
                 breakout_score = breakout_series.iloc[-1] if not breakout_series.empty and pd.notna(breakout_series.iloc[-1]) else 0.0
                 ewmac_score = ewmac_series.iloc[-1] if not ewmac_series.empty and pd.notna(ewmac_series.iloc[-1]) else 0.0
                 combined_score = final_forecast_series.iloc[-1] if not final_forecast_series.empty and pd.notna(final_forecast_series.iloc[-1]) else 0.0
-                
+
                 results.append({
                     'Token': symbol, 'BiLSTM Signal': bilstm_signal, 'Confidence': confidence, 'Market Phase': market_phase,
                     'Bull/Bear Bias': bull_bear_bias, 'Net BPS': net_bps, 'Wavelet Accuracy': accuracy, 'Residual Momentum': res_mom_score,
                     'Breakout': breakout_score,
                     'EWMAC': ewmac_score,
-                    'Combined Forecast': combined_score,
+                    'Forecast': combined_score
                 })
             except Exception as e:
                 st.warning(f"Could not analyze {symbol}. Error: {e}")
                 continue
             finally:
                 progress_bar.progress((i + 1) / len(symbols), text=f"Analyzed {symbol}...")
-        
+
         progress_bar.empty()
-        return pd.DataFrame(results)    
+        return pd.DataFrame(results)
 
     # ==============================================================================
     # UI AND PLOTTING
@@ -728,11 +689,10 @@ with tab3:
                     df_display_formatted['Residual Momentum'] = df_display_formatted['Residual Momentum'].map('{:+.2f}'.format)
                     df_display_formatted['Breakout'] = df_display_formatted['Breakout'].map('{:+.2f}'.format)
                     df_display_formatted['EWMAC'] = df_display_formatted['EWMAC'].map('{:+.2f}'.format)
-                    df_display_formatted['Combined Forecast'] = df_display_formatted['Combined Forecast'].map('{:+.2f}'.format)
-                    
-                    column_order = ['Token', 'BiLSTM Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias', 'Net BPS', 'Wavelet Accuracy', 'Residual Momentum', 'Breakout', 'EWMAC', 'Combined Forecast']
+                    df_display_formatted['Forecast'] = df_display_formatted['Forecast'].map('{:+.2f}'.format)
+                    column_order = ['Token', 'BiLSTM Signal', 'Confidence', 'Market Phase', 'Bull/Bear Bias', 'Net BPS', 'Wavelet Accuracy', 'Residual Momentum', 'Breakout', 'EWMAC', 'Forecast']
                     st.dataframe(df_display_formatted[column_order], use_container_width=True, hide_index=True)
-                
+
                 phase_colors = {'Bull': '#60a971', 'Bear': '#d6454f', 'Correction': '#f8a541', 'Rebound': '#55b6e6'}
                 with col2:
                     st.subheader("Market Sentiment")
