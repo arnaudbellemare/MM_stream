@@ -547,7 +547,12 @@ with tab3:
                 
                 # CORRECT USAGE: Calling the triple barrier function with all required OHLC columns
                 labels, _ = get_triple_barrier_labels_and_vol(df_model['high'], df_model['low'], df_model['close'], df_model['open'], lookahead_periods=24, vol_mult=1.5)
-                
+                hybrid_vol = get_hybrid_volatility(
+                    high=df['high'],
+                    low=df['low'],
+                    open_=df['open'],
+                    close=df['close']
+                )
                 common_index = encoded_features_df.index.intersection(labels.index)
                 final_features = encoded_features_df.loc[common_index]
                 final_labels = labels.loc[common_index]
