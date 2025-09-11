@@ -471,7 +471,7 @@ with tab3:
 
         # Calculate short-term and long-term daily volatility
         sigma_day = np.sqrt(ewvar)
-        sigma_day_10y = sigma_day.ewm(span=2500, adjust=False).mean() # 10 years of trading days
+        sigma_day_10y = sigma_day.ewm(span=365, adjust=False).mean() # 10 years of trading days
 
         # Blend the short-term and long-term volatilities
         w = blend_ratio / 100.0
