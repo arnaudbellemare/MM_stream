@@ -476,7 +476,16 @@ with tab3:
         vol = robust_vol_calc(price, vol_days)
         forecast = ewmac(price, vol, Lfast, Lslow)
         return forecast
+# ADD THIS NEW FUNCTION
+    def calculate_ewmac_forecast(price, volatility, Lfast, Lslow):
 
+        fast_ewma = price.ewm(span=Lfast, min_periods=1).mean()
+        slow_ewma = price.ewm(span=Lslow, min_periods=1).mean()
+    
+    # Ensure volatility series has no zeros to prevent division errors
+        volatility_safe = volatility.replace(0, np.nan).ffill()
+    
+        return (fast_ewma - slow_ewma) / volatility_safe
     # ==============================================================================
     # MAIN WATCHLIST GENERATION FUNCTION
     # ==============================================================================
@@ -576,7 +585,7 @@ with tab3:
                 uthresh = sigma * np.sqrt(2 * np.log(len(close_prices)))
                 coeffs_thresh = [pywt.threshold(c, uthresh, mode='soft') for c in coeffs]
                 data_denoised = pywt.waverec(coeffs_thresh, 'db4')[:len(close_prices)]
-                w = get_rogers_satchell_volatility(df['high'], df['low'], df['open'], df['close'])
+                w = get_hybrid_volatility(df['high'], df['low'], df['open'], df['close'])
                 wv_labels = auto_labeling(data_denoised, w.mean()) # Using mean vol as threshold
                 df['wv_label'] = wv_labels
                 df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
@@ -592,7 +601,7 @@ with tab3:
 
                 breakout_series = breakout(df['close'], lookback=20, smooth=5)
                 breakout_score = breakout_series.iloc[-1] if not breakout_series.empty and pd.notna(breakout_series.iloc[-1]) else 0.0
-                ewmac_series = ewmac(df_model['close'], df_model['volatility'], Lfast=32, Lslow=96)
+                ewmac_series = calculate_ewmac_forecast(price=df['close'], volatility=hybrid_vol, Lfast=32, Lslow=96)
                 ewmac_score = ewmac_series.iloc[-1] if not ewmac_series.empty and pd.notna(ewmac_series.iloc[-1]) else 0.0
                 results.append({
                     'Token': symbol, 'BiLSTM Signal': bilstm_signal, 'Confidence': confidence, 'Market Phase': market_phase,
