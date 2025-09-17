@@ -26,6 +26,7 @@ from keras.layers import Input, Dense, Bidirectional, LSTM
 from tensorflow.keras.preprocessing.sequence import TimeseriesGenerator
 from sklearn.metrics import make_scorer
 from scipy.stats.mstats import winsorize
+from sklearn.decomposition import PCA
 warnings.filterwarnings('ignore')
 
 # ==============================================================================
@@ -315,6 +316,9 @@ def clean_and_prepare_data(df_raw, symbol):
     st.write(f"[{symbol}] Data cleaned. Outliers in volume and log returns have been capped via Winsorization.")
     return df
 
+# ==============================================================================
+# TAB 3: COMPREHENSIVE WATCHLIST
+# ==============================================================================
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
 # ==============================================================================
@@ -669,9 +673,6 @@ with tab3:
     # ==============================================================================
     # UI AND PLOTTING
     # ==============================================================================
-    # ==============================================================================
-    # UI AND PLOTTING
-    # ==============================================================================
     if st.sidebar.button("📈 Run Comprehensive Analysis", key="run_wl"):
         watchlist_symbols = get_filtered_tickers(min_volume_wl)
         if not watchlist_symbols:
@@ -758,6 +759,8 @@ with tab3:
                     fig_breakout_quadrant.add_annotation(text="<b>Strong Breakout & Underperforming</b>", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
                     fig_breakout_quadrant.add_annotation(text="<b>Breakdown Risk & Outperforming</b>", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
                     fig_breakout_quadrant.add_annotation(text="<b>Breakdown Risk & Underperforming</b>", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    # CORRECTED: Added watermark to this chart
+                    fig_breakout_quadrant.add_annotation(text="<b>PERMUTATION RESEARCH ©</b>", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font=dict(size=72, color="rgba(220, 220, 220, 0.2)"), align="center")
                     fig_breakout_quadrant.update_traces(textposition='top center', textfont_size=10)
                     fig_breakout_quadrant.update_yaxes(title_text="Breakout Signal", zeroline=False)
                     fig_breakout_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
@@ -774,6 +777,8 @@ with tab3:
                     fig_ewmac_quadrant.add_annotation(text="<b>Bull Trend & Underperforming</b>", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
                     fig_ewmac_quadrant.add_annotation(text="<b>Bear Trend & Outperforming</b>", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
                     fig_ewmac_quadrant.add_annotation(text="<b>Bear Trend & Underperforming</b>", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    # CORRECTED: Added watermark to this chart
+                    fig_ewmac_quadrant.add_annotation(text="<b>PERMUTATION RESEARCH ©</b>", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font=dict(size=72, color="rgba(220, 220, 220, 0.2)"), align="center")
                     fig_ewmac_quadrant.update_traces(textposition='top center', textfont_size=10)
                     fig_ewmac_quadrant.update_yaxes(title_text="EWMAC Forecast", zeroline=False)
                     fig_ewmac_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
@@ -794,6 +799,7 @@ with tab3:
                     pca_features_scaled = StandardScaler().fit_transform(pca_features)
 
                     # 2. Apply PCA
+                    # This line will now work because 'PCA' is imported correctly at the top of the script
                     pca = PCA(n_components=2)
                     principal_components = pca.fit_transform(pca_features_scaled)
                     df_watchlist['PC1'] = principal_components[:, 0]
