@@ -676,6 +676,9 @@ with tab3:
     # ==============================================================================
     # UI AND PLOTTING (Correctly indented for placement within tab3)
     # ==============================================================================
+   # ==============================================================================
+    # UI AND PLOTTING
+    # ==============================================================================
     if st.sidebar.button("📈 Run Comprehensive Analysis", key="run_wl"):
         watchlist_symbols = get_filtered_tickers(min_volume_wl)
         if not watchlist_symbols:
@@ -712,13 +715,24 @@ with tab3:
                     fig_donut.update_layout(showlegend=False, margin=dict(t=20, b=20, l=20, r=20))
                     st.plotly_chart(fig_donut, use_container_width=True)
 
+                    # FIXED: Added the Bull/Bear Bias metric summary
+                    mean_bias = df_watchlist['Bull/Bear Bias'].mean()
+                    bias_label = "Net Bullish" if mean_bias > 0 else "Net Bearish" if mean_bias < 0 else "Neutral"
+                    st.metric(
+                        label="Bull/Bear Bias",
+                        value=f"{mean_bias:+.2%}",
+                        delta=bias_label,
+                        help="Aggregated average of all asset wavelet trends: positive=bullish, negative=bearish"
+                    )
+
                 # --- QUADRANT PLOT 1: Breakout vs. Residual Momentum ---
                 st.subheader("Breakout vs. Momentum Quadrant")
                 st.markdown("Plots asset strength based on its breakout potential (Y-axis) versus its momentum relative to the market (X-axis).")
                 if not df_watchlist.empty:
+                    # FIXED: Changed y='Breakout Signal' to y='Breakout'
                     fig_breakout_quadrant = px.scatter(
-                        df_watchlist, x='Residual Momentum', y='Breakout Signal', text='Token', color='Market Phase',
-                        color_discrete_map=phase_colors, hover_data={'Residual Momentum': ':.2f', 'Breakout Signal': ':.2f'}
+                        df_watchlist, x='Residual Momentum', y='Breakout', text='Token', color='Market Phase',
+                        color_discrete_map=phase_colors, hover_data={'Residual Momentum': ':.2f', 'Breakout': ':.2f'}
                     )
                     fig_breakout_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey")
                     fig_breakout_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
@@ -732,7 +746,6 @@ with tab3:
                     fig_breakout_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
                     fig_breakout_quadrant.update_layout(title_text="Breakout Signal vs. Residual Momentum", height=500, legend_title="Market Phase")
                     st.plotly_chart(fig_breakout_quadrant, use_container_width=True)
-
 
                 # --- QUADRANT PLOT 2: Market Landscape ---
                 st.subheader("Market Landscape Quadrant")
@@ -795,7 +808,7 @@ with tab3:
                     fig_ewmac_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
                     fig_ewmac_quadrant.update_layout(title_text="EWMAC Forecast vs. Residual Momentum", height=500, legend_title="Market Phase")
                     st.plotly_chart(fig_ewmac_quadrant, use_container_width=True)
-
+                
                 # --- QUADRANT PLOT 5: Principal Component Analysis (PCA) ---
                 st.subheader("Principal Component Analysis (PCA) Quadrant")
                 st.markdown("Reduces multiple features into two principal components to provide a holistic view for identifying market leaders and laggards.")
@@ -822,6 +835,7 @@ with tab3:
                     fig_pca_quadrant.update_xaxes(title_text="Principal Component 1", zeroline=False)
                     fig_pca_quadrant.update_layout(title_text="PCA-Based Market Landscape", height=500, legend_title="Market Phase")
                     st.plotly_chart(fig_pca_quadrant, use_container_width=True)
+
 
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER (Unchanged)
