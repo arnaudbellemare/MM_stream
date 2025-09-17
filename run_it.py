@@ -315,6 +315,53 @@ def clean_and_prepare_data(df_raw, symbol):
     df.drop(columns=['log_returns'], inplace=True)
     st.write(f"[{symbol}] Data cleaned. Outliers in volume and log returns have been capped via Winsorization.")
     return df
+def calculate_combined_forecast(df: pd.DataFrame, daily_sig_price: pd.Series) -> pd.Series:
+    """
+    Calculates a combined forecast from EWMAC and Breakout components,
+    normalized by volatility, replicating the provided Pine Script logic.
+    """
+    close = df['close']
+    high = df['high']
+    low = df['low']
+    fccap = 20.0
+
+    # --- 1. EWMAC Trend Component ---
+    ewmac8 = close.ewm(span=8, adjust=False).mean() - close.ewm(span=32, adjust=False).mean()
+    ewmac16 = close.ewm(span=16, adjust=False).mean() - close.ewm(span=64, adjust=False).mean()
+    ewmac32 = close.ewm(span=32, adjust=False).mean() - close.ewm(span=128, adjust=False).mean()
+
+    ewmac8_norm = (ewmac8 / daily_sig_price) * 5.95
+    ewmac16_norm = (ewmac16 / daily_sig_price) * 4.1
+    ewmac32_norm = (ewmac32 / daily_sig_price) * 2.79
+
+    combined_ewmac = (ewmac8_norm.clip(-fccap, fccap) +
+                      ewmac16_norm.clip(-fccap, fccap) +
+                      ewmac32_norm.clip(-fccap, fccap)) / 3
+
+    combined_ewmac_fdm = (combined_ewmac * 1.08).clip(-fccap, fccap)
+
+    # --- 2. Breakout (BO) Component ---
+    def smoothed_breakout(period):
+        high_period = high.rolling(window=period).max()
+        low_period = low.rolling(window=period).min()
+        raw_bo = 40 * (close - (high_period + low_period) / 2) / (high_period - low_period).replace(0, np.nan)
+        return raw_bo.ewm(span=int(period / 4), adjust=False).mean()
+
+    bo40 = smoothed_breakout(40) * 0.70
+    bo80 = smoothed_breakout(80) * 0.73
+    bo160 = smoothed_breakout(160) * 0.74
+
+    combined_bo = (bo40 + bo80 + bo160) / 3 * 1.1
+
+    # --- 3. Final Combined Forecast ---
+    final_forecast = (combined_ewmac_fdm + combined_bo) / 2
+    
+    # --- 4. Relative (Market-Adjusted) Forecast ---
+    # Assuming 'market_df' is available in the calling scope for relative calculation
+    # This part needs to be adapted in `generate_comprehensive_watchlist`
+    # For now, this function just returns the absolute forecast.
+    
+    return final_forecast.fillna(0)
 
 # ==============================================================================
 # TAB 3: COMPREHENSIVE WATCHLIST
@@ -569,6 +616,17 @@ with tab3:
                 df_model['volume_z'] = get_zscore(df_model['volume'])
                 df_model['ret_fast'] = df_model['close'].pct_change(7)
                 df_model['ret_slow'] = df_model['close'].pct_change(30)
+                daily_df = fetch_data(symbol, '1d', limit) # Fetch daily data for vol calc
+                stable_vol_price = calculate_stable_daily_volatility(daily_df['close'])
+            # Now, align it with the main dataframe's index
+                stable_vol_price = stable_vol_price.reindex(df.index, method='ffill')
+            
+            # Calculate the forecast using the new function
+                combined_forecast_series = calculate_combined_forecast(df, stable_vol_price)
+            
+            # Get the latest value for the results table
+                latest_combined_forecast = combined_forecast_series.iloc[-1] if not combined_forecast_series.empty and pd.notna(combined_forecast_series.iloc[-1]) else 0.0
+
                 df_model['volatility'] = get_hybrid_volatility(high=df_model['high'],low=df_model['low'],open_=df_model['open'],close=df_model['close'])
                 df_model['adx'] = get_adx(df_model['high'], df_model['low'], df_model['close'], 14)
                 w_fast = np.sign(df_model['ret_fast']); w_slow = np.sign(df_model['ret_slow'])
@@ -659,7 +717,9 @@ with tab3:
                     'Bull/Bear Bias': bull_bear_bias, 'Net BPS': net_bps, 'Wavelet Accuracy': accuracy, 'Residual Momentum': res_mom_score,
                     'Breakout': breakout_score,
                     'EWMAC': ewmac_score,
-                    'Forecast': combined_score
+                    'Forecast': combined_score,
+                    'Combined_FDM_Forecast': latest_combined_forecast  # ADD THIS NEW KEY
+
                 })
             except Exception as e:
                 st.warning(f"Could not analyze {symbol}. Error: {e}")
@@ -835,6 +895,37 @@ with tab3:
                     fig_pca_quadrant.update_xaxes(title_text="Principal Component 1", zeroline=False)
                     fig_pca_quadrant.update_layout(title_text="PCA-Based Market Landscape", height=500, legend_title="Market Phase")
                     st.plotly_chart(fig_pca_quadrant, use_container_width=True)
+# --- QUADRANT PLOT 6: Combined FDM Forecast vs. Residual Momentum ---
+                st.subheader("Combined FDM Forecast vs. Momentum Quadrant")
+                st.markdown("Plots the proprietary **Combined FDM Forecast** (Y-axis) against **Residual Momentum** (X-axis).")
+                if not df_watchlist.empty and 'Combined_FDM_Forecast' in df_watchlist.columns:
+                    fig_fdm_quadrant = px.scatter(
+                        df_watchlist,
+                        x='Residual Momentum',
+                        y='Combined_FDM_Forecast',
+                        text='Token',
+                        color='Market Phase',
+                        color_discrete_map=phase_colors,
+                        hover_data={'Residual Momentum': ':.2f', 'Combined_FDM_Forecast': ':.2f'}
+                    )
+                    fig_fdm_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey")
+                    fig_fdm_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
+                    fig_fdm_quadrant.add_annotation(text="<b>Strong Forecast & Outperforming</b>", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_fdm_quadrant.add_annotation(text="<b>Strong Forecast & Underperforming</b>", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    fig_fdm_quadrant.add_annotation(text="<b>Weak Forecast & Outperforming</b>", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_fdm_quadrant.add_annotation(text="<b>Weak Forecast & Underperforming</b>", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    fig_fdm_quadrant.add_annotation(text="<b>PERMUTATION RESEARCH ©</b>", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font=dict(size=64, color="rgba(220, 220, 220, 0.2)"), align="center")
+    
+                    fig_fdm_quadrant.update_traces(textposition='top center', textfont_size=10)
+                    fig_fdm_quadrant.update_yaxes(title_text="Combined FDM Forecast", zeroline=False)
+                    fig_fdm_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
+                    fig_fdm_quadrant.update_layout(
+                        title_text="Combined FDM Forecast vs. Residual Momentum",
+                        height=500,
+                        legend_title="Market Phase"
+                    )
+                    st.plotly_chart(fig_fdm_quadrant, use_container_width=True)
+
 
 
 # ==============================================================================
