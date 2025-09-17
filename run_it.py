@@ -874,7 +874,7 @@ with tab4:
                 fig_wv.add_trace(go.Scatter(x=up_signals.index, y=up_signals['close'], mode='markers', name='Up Signal', marker=dict(color='deepskyblue', size=7, symbol='circle')))
                 down_signals = df_wv[df_wv['label'] == -1]
                 fig_wv.add_trace(go.Scatter(x=down_signals.index, y=down_signals['close'], mode='markers', name='Down Signal', marker=dict(color='crimson', size=7, symbol='circle')))
-                watermark_text = f"<span style='font-size: 40px;'><b>{symbol_wv}</b></span><br><span style='font-size: 12px; line-height: 0.9em;'>Permutation Research ©</span>"
+                watermark_text = f"<span style='font-size: 24px;'><b>{symbol_wv}</b></span><br><span style='font-size: 10px; line-height: 0.9em;'>Permutation Research ©</span>"
                 fig_wv.add_annotation(text=watermark_text, xref="paper", yref="paper", x=0.05, y=0.98, showarrow=False, font=dict(color="rgba(0, 0, 0, 0.2)"), align="center", xanchor="left", yanchor="top")
                 fig_wv.update_layout(title=f'Wavelet Signals on {symbol_wv} Close Price', xaxis_title='Date', yaxis_title='Price (USD)', legend_title='Legend', height=600, paper_bgcolor='rgb(255, 255, 255)', plot_bgcolor='rgb(255, 255, 255)')
                 st.plotly_chart(fig_wv, use_container_width=True)
