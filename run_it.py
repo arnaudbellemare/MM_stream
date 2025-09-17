@@ -669,6 +669,9 @@ with tab3:
     # ==============================================================================
     # UI AND PLOTTING
     # ==============================================================================
+    # ==============================================================================
+    # UI AND PLOTTING
+    # ==============================================================================
     if st.sidebar.button("📈 Run Comprehensive Analysis", key="run_wl"):
         watchlist_symbols = get_filtered_tickers(min_volume_wl)
         if not watchlist_symbols:
@@ -681,6 +684,7 @@ with tab3:
                 st.subheader("Comprehensive Market Watchlist")
                 col1, col2 = st.columns([3, 1])
                 with col1:
+                    # Format dataframe for display
                     df_display_formatted = df_watchlist.sort_values(by='Confidence', ascending=False).reset_index(drop=True)
                     df_display_formatted['Confidence'] = df_display_formatted['Confidence'].map('{:.1%}'.format)
                     df_display_formatted['Bull/Bear Bias'] = df_display_formatted['Bull/Bear Bias'].map('{:+.2%}'.format)
@@ -695,8 +699,9 @@ with tab3:
 
                 phase_colors = {'Bull': '#60a971', 'Bear': '#d6454f', 'Correction': '#f8a541', 'Rebound': '#55b6e6'}
                 with col2:
-                    st.subheader("Market Sentiment")
-                    st.markdown("<h5 style='text-align: center;'>Market Phase Distribution</h5>", unsafe_allow_html=True)
+                    # This donut chart is the "circle representation of bull bear bias aggregated for regime"
+                    st.subheader("Regime Distribution")
+                    st.markdown("<h5 style='text-align: center;'>Aggregated Market Phases</h5>", unsafe_allow_html=True)
                     phase_counts = df_watchlist['Market Phase'].value_counts()
                     fig_donut = px.pie(values=phase_counts.values, names=phase_counts.index, hole=0.5, color=phase_counts.index, color_discrete_map=phase_colors)
                     fig_donut.update_traces(textinfo='label+percent', textfont=dict(color='#34495e', size=14), hoverinfo='label+percent+value')
@@ -704,14 +709,16 @@ with tab3:
                     fig_donut.update_layout(showlegend=False, margin=dict(t=20, b=20, l=20, r=20))
                     st.plotly_chart(fig_donut, use_container_width=True)
 
+                # The quadrant annotations explain the "permutation research" (i.e., the interpretation) for each section
                 st.subheader("Market Landscape Quadrant")
-                st.markdown("This chart plots all assets based on their long-term trend (`Bull/Bear Bias`) versus their short-term momentum relative to the market (`Residual Momentum`).")
+                st.markdown("This chart plots all assets based on their long-term trend (`Bull/Bear Bias`) versus their short-term momentum relative to the market (`Residual Momentum`). The annotations explain the investment thesis for each quadrant.")
                 if not df_watchlist.empty:
                     fig_quadrant = px.scatter(
                         df_watchlist, x='Residual Momentum', y='Bull/Bear Bias', text='Token', color='Market Phase',
                         color_discrete_map=phase_colors, hover_data={'Residual Momentum': ':.2f', 'Bull/Bear Bias': ':.2%'}
                     )
                     fig_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey"); fig_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
+                    # These annotations explain the "research" behind each quadrant
                     fig_quadrant.add_annotation(text="<b>Leading Bulls</b><br>(Strong Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
                     fig_quadrant.add_annotation(text="<b>Lagging Bulls</b><br>(Strong Trend, Underperforming)", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
                     fig_quadrant.add_annotation(text="<b>Reversal Candidates</b><br>(Bear Trend, Outperforming)", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
@@ -722,7 +729,7 @@ with tab3:
                     st.plotly_chart(fig_quadrant, use_container_width=True)
 
                 st.subheader("AI Signal Confidence vs. Momentum Quadrant")
-                st.markdown("This chart visualizes the AI-generated signals, plotting the model's **Confidence** against the asset's **Residual Momentum**. The color of each point indicates the signal type (Buy, Sell, or Hold).")
+                st.markdown("This chart visualizes the AI-generated signals, plotting the model's **Confidence** against the asset's **Residual Momentum**. This helps identify high-conviction AI signals that are aligned with current market momentum.")
                 if not df_watchlist.empty:
                     signal_colors = {'Buy': '#2ecc71', 'Sell': '#e74c3c', 'Hold': '#95a5a6'}
                     median_confidence = df_watchlist['Confidence'].median()
@@ -742,7 +749,7 @@ with tab3:
                     st.plotly_chart(fig_signal_quadrant, use_container_width=True)
 
                 st.subheader("Breakout vs. Momentum Quadrant")
-                st.markdown("This chart plots asset strength based on its breakout potential (Y-axis) versus its short-term momentum relative to the market (X-axis).")
+                st.markdown("This chart plots asset strength based on its breakout potential (Y-axis) versus its short-term momentum relative to the market (X-axis). Assets in the top-right are showing strong signs of both breaking out and outperforming the market.")
                 if not df_watchlist.empty:
                     fig_breakout_quadrant = px.scatter(df_watchlist, x='Residual Momentum', y='Breakout', text='Token', color='Market Phase', color_discrete_map=phase_colors, hover_data={'Residual Momentum': ':.2f', 'Breakout': ':.2f'})
                     fig_breakout_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey")
@@ -758,7 +765,7 @@ with tab3:
                     st.plotly_chart(fig_breakout_quadrant, use_container_width=True)
 
                 st.subheader("EWMAC Trend vs. Momentum Quadrant")
-                st.markdown("This chart plots the trend-following signal from a volatility-adjusted EWMAC (Y-axis) against the asset's residual momentum (X-axis).")
+                st.markdown("This chart plots the trend-following signal from a volatility-adjusted EWMAC (Y-axis) against the asset's residual momentum (X-axis). The top-right quadrant highlights assets in a strong trend that are also outperforming.")
                 if not df_watchlist.empty:
                     fig_ewmac_quadrant = px.scatter(df_watchlist, x='Residual Momentum', y='EWMAC', text='Token', color='Market Phase', color_discrete_map=phase_colors, hover_data={'Residual Momentum': ':.2f', 'EWMAC': ':.2f'})
                     fig_ewmac_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey")
@@ -772,6 +779,44 @@ with tab3:
                     fig_ewmac_quadrant.update_xaxes(title_text="Residual Momentum (vs. BTC)", zeroline=False)
                     fig_ewmac_quadrant.update_layout(title_text="EWMAC Forecast vs. Residual Momentum", height=500, legend_title="Market Phase")
                     st.plotly_chart(fig_ewmac_quadrant, use_container_width=True)
+
+                # NEWLY ADDED: PCA Quadrant Plot to identify which assets to bet on
+                st.subheader("Principal Component Analysis (PCA) Quadrant")
+                st.markdown("""
+                This plot reduces the multi-dimensional features (Momentum, Bias, Breakout, Trend, etc.) into two 'Principal Components' that capture the most variance in the data. This provides a holistic view to identify which assets to bet on.
+                - **PC1 (Horizontal Axis):** Represents the primary driver of differentiation among assets (e.g., overall momentum or trend strength).
+                - **PC2 (Vertical Axis):** Represents the second most important factor.
+                Assets in the **top-right quadrant** are generally strong across all calculated metrics and represent potential leaders.
+                """)
+                if not df_watchlist.empty:
+                    # 1. Select and scale features for PCA
+                    pca_features = df_watchlist[['Residual Momentum', 'Bull/Bear Bias', 'Breakout', 'EWMAC', 'Forecast', 'Confidence']]
+                    pca_features_scaled = StandardScaler().fit_transform(pca_features)
+
+                    # 2. Apply PCA
+                    pca = PCA(n_components=2)
+                    principal_components = pca.fit_transform(pca_features_scaled)
+                    df_watchlist['PC1'] = principal_components[:, 0]
+                    df_watchlist['PC2'] = principal_components[:, 1]
+
+                    # 3. Create the PCA scatter plot
+                    fig_pca_quadrant = px.scatter(
+                        df_watchlist, x='PC1', y='PC2', text='Token', color='Market Phase',
+                        color_discrete_map=phase_colors, hover_data={'Token': True, 'PC1': ':.2f', 'PC2': ':.2f'}
+                    )
+                    fig_pca_quadrant.add_hline(y=0, line_width=1, line_dash="dash", line_color="grey")
+                    fig_pca_quadrant.add_vline(x=0, line_width=1, line_dash="dash", line_color="grey")
+                    # These annotations provide the "research" behind the PCA quadrants
+                    fig_pca_quadrant.add_annotation(text="<b>Overall Leaders</b>", xref="paper", yref="paper", x=0.98, y=0.98, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_pca_quadrant.add_annotation(text="<b>Contrarian Strength</b>", xref="paper", yref="paper", x=0.02, y=0.98, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    fig_pca_quadrant.add_annotation(text="<b>Niche Weakness</b>", xref="paper", yref="paper", x=0.98, y=0.02, showarrow=False, align="right", font=dict(color="grey", size=11))
+                    fig_pca_quadrant.add_annotation(text="<b>Overall Laggards</b>", xref="paper", yref="paper", x=0.02, y=0.02, showarrow=False, align="left", font=dict(color="grey", size=11))
+                    fig_pca_quadrant.add_annotation(text="<b>PERMUTATION RESEARCH ©</b>", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font=dict(size=72, color="rgba(220, 220, 220, 0.2)"), align="center")
+                    fig_pca_quadrant.update_traces(textposition='top center', textfont_size=10)
+                    fig_pca_quadrant.update_yaxes(title_text="Principal Component 2", zeroline=False)
+                    fig_pca_quadrant.update_xaxes(title_text="Principal Component 1", zeroline=False)
+                    fig_pca_quadrant.update_layout(title_text="PCA-Based Market Landscape", height=500, legend_title="Market Phase")
+                    st.plotly_chart(fig_pca_quadrant, use_container_width=True)
 
 # ==============================================================================
 # TAB 4: WAVELET SIGNAL VISUALIZER (Unchanged)
