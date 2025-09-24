@@ -30,12 +30,81 @@ from sklearn.decomposition import PCA
 warnings.filterwarnings('ignore')
 
 # ==============================================================================
+# R²-PCA Configuration Parameters
+# ==============================================================================
+# Robust Rolling PCA (R²-PCA) Parameters
+# These parameters control the alignment and stability of principal components
+# across rolling time windows to prevent sign flips and reordering.
+
+ALIGNMENT_METHOD = "cosine"  # Method for aligning eigenvectors: "cosine" similarity
+FLIP_THRESHOLD = 0.0         # Threshold for flipping eigenvectors (0.0 = always flip if negative dot product)
+
+# R²-PCA Documentation:
+# ===================
+# R²-PCA addresses the instability issues in traditional rolling PCA by:
+# 1. Computing standard PCA on each window
+# 2. Aligning eigenvectors with previous window using cosine similarity
+# 3. Flipping eigenvectors when dot product with previous is negative
+# 4. Maintaining consistent economic interpretation of PC1/PC2
+#
+# This ensures smooth, stable principal component loadings for:
+# - Contrarian-strength analysis in crypto markets
+# - Reliable trend identification across time windows
+# - Consistent interpretation of market factors
+
+# ==============================================================================
 # App Configuration
 # ==============================================================================
 st.set_page_config(layout="wide", page_title="Quantitative Research Dashboard")
 
 st.title("QUANTITATIVE TRADING RESEARCH DASHBOARD")
 st.markdown("An interactive dashboard combining **AI-driven predictions** with **in-depth statistical analysis** for a comprehensive market view.")
+
+# ==============================================================================
+# R²-PCA Helper Functions
+# ==============================================================================
+def compute_r2_pca(window_data, prev_evecs, n_components=2):
+    """
+    Compute R²-PCA with cosine similarity alignment to prevent sign flips and reordering.
+    
+    Args:
+        window_data: 2D array of shape (n_samples, n_assets) - standardized returns
+        prev_evecs: array of shape (n_components, n_assets) or None for first window
+        n_components: number of principal components to extract
+        
+    Returns:
+        aligned_evecs: aligned eigenvectors with consistent orientation
+    """
+    # 1. Standard PCA on this window
+    pca = PCA(n_components=n_components)
+    pca.fit(window_data)
+    current_evecs = pca.components_  # shape (n_components, n_assets)
+    
+    # 2. If no previous components provided, return raw
+    if prev_evecs is None:
+        return current_evecs
+    
+    # 3. Align & flip with cosine similarity
+    aligned_evecs = np.zeros_like(current_evecs)
+    used_indices = set()
+    
+    for i in range(n_components):
+        # Compute absolute dot products against previous axes
+        similarities = np.abs(np.dot(prev_evecs, current_evecs[i]))
+        
+        # Find best match that isn't already used
+        best_match_idx = np.argmax(similarities)
+        while best_match_idx in used_indices:
+            similarities[best_match_idx] = -1
+            best_match_idx = np.argmax(similarities)
+        
+        used_indices.add(best_match_idx)
+        
+        # Flip if necessary (negative dot product)
+        sign = np.sign(np.dot(prev_evecs[best_match_idx], current_evecs[i]))
+        aligned_evecs[best_match_idx] = current_evecs[i] * sign
+    
+    return aligned_evecs
 
 # ==============================================================================
 # Helper Functions (used across tabs)
@@ -60,9 +129,10 @@ tabs = st.tabs([
     "🏆 Hawkes Strategy Backtester",
     "🔬 SG Swing Analysis",
     "📈 Comprehensive Watchlist",
-    "🌊 Wavelet Signal Visualizer"
+    "🌊 Wavelet Signal Visualizer",
+    "🔄 R²-PCA Analysis"
 ])
-tab1, tab2, tab3, tab4 = tabs
+tab1, tab2, tab3, tab4, tab5 = tabs
 
 # ==============================================================================
 # TAB 1: HAWKES STRATEGY BACKTESTER (Unchanged)
@@ -982,3 +1052,190 @@ with tab4:
                 fig_wv.add_annotation(text=watermark_text, xref="paper", yref="paper", x=0.05, y=0.98, showarrow=False, font=dict(color="rgba(0, 0, 0, 0.2)"), align="center", xanchor="left", yanchor="top")
                 fig_wv.update_layout(title=f'Wavelet Signals on {symbol_wv} Close Price', xaxis_title='Date', yaxis_title='Price (USD)', legend_title='Legend', height=600, paper_bgcolor='rgb(255, 255, 255)', plot_bgcolor='rgb(255, 255, 255)')
                 st.plotly_chart(fig_wv, use_container_width=True)
+
+# ==============================================================================
+# TAB 5: R²-PCA ANALYSIS
+# ==============================================================================
+with tab5:
+    st.header("🔄 Robust Rolling PCA (R²-PCA) Analysis")
+    st.markdown("""
+    **Robust Rolling PCA (R²-PCA)** provides smooth, stable principal component loadings by:
+    - **Cosine-similarity alignment** prevents sign flips and reordering
+    - **Rolling window approach** captures evolving market dynamics
+    - **Stable PC1/PC2 loadings** for contrarian-strength analysis
+    
+    This implementation demonstrates how R²-PCA maintains consistent principal component orientations
+    across time windows, enabling reliable trend analysis in crypto markets.
+    """)
+    
+    st.sidebar.header("🔄 R²-PCA Configuration")
+    r2pca_symbols = st.sidebar.multiselect(
+        "Select Assets for R²-PCA Analysis",
+        ["BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD", "XRP/USD", "DOT/USD", "LINK/USD", "UNI/USD"],
+        default=["BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD"]
+    )
+    window_size_r2pca = st.sidebar.slider("Rolling Window Size", 30, 200, 60, key="r2pca_window")
+    data_limit_r2pca = st.sidebar.slider("Data Points", 500, 2000, 1000, key="r2pca_limit")
+    timeframe_r2pca = st.sidebar.selectbox("Timeframe", ['1h', '4h', '1d'], index=2, key="r2pca_tf")
+    
+    @st.cache_data(ttl=3600)
+    def run_r2pca_analysis(symbols, window_size, limit, timeframe):
+        """Run R²-PCA analysis on selected symbols."""
+        st.info(f"Running R²-PCA analysis on {len(symbols)} assets...")
+        
+        # Fetch data for all symbols
+        data_dict = {}
+        for symbol in symbols:
+            df = fetch_data(symbol, timeframe, limit)
+            if not df.empty and len(df) > window_size:
+                data_dict[symbol] = df
+            else:
+                st.warning(f"Insufficient data for {symbol}")
+        
+        if len(data_dict) < 2:
+            st.error("Need at least 2 assets with sufficient data for R²-PCA analysis.")
+            return pd.DataFrame()
+        
+        # Prepare returns matrix
+        returns_data = []
+        common_dates = None
+        
+        for symbol, df in data_dict.items():
+            returns = df['close'].pct_change().dropna()
+            if common_dates is None:
+                common_dates = returns.index
+            else:
+                common_dates = common_dates.intersection(returns.index)
+        
+        if len(common_dates) < window_size:
+            st.error("Insufficient common data points across assets.")
+            return pd.DataFrame()
+        
+        # Align all returns to common dates
+        aligned_returns = pd.DataFrame(index=common_dates)
+        for symbol, df in data_dict.items():
+            returns = df['close'].pct_change().dropna()
+            aligned_returns[symbol] = returns.reindex(common_dates)
+        
+        # Standardize returns
+        standardized_returns = (aligned_returns - aligned_returns.mean()) / aligned_returns.std()
+        
+        # R²-PCA Rolling Analysis
+        results = []
+        prev_components = None
+        
+        for i in range(window_size, len(standardized_returns)):
+            window_data = standardized_returns.iloc[i-window_size:i].values
+            
+            # Apply R²-PCA
+            aligned_components = compute_r2_pca(window_data, prev_components, n_components=2)
+            prev_components = aligned_components
+            
+            # Project current returns onto aligned components
+            current_returns = standardized_returns.iloc[i-1].values
+            pc1_score = np.dot(current_returns, aligned_components[0])
+            pc2_score = np.dot(current_returns, aligned_components[1])
+            
+            results.append({
+                'date': common_dates[i-1],
+                'PC1': pc1_score,
+                'PC2': pc2_score,
+                'PC1_loading_BTC': aligned_components[0][0] if 'BTC/USD' in symbols else 0,
+                'PC2_loading_BTC': aligned_components[1][0] if 'BTC/USD' in symbols else 0,
+            })
+        
+        return pd.DataFrame(results)
+    
+    if st.sidebar.button("🔄 Run R²-PCA Analysis", key="run_r2pca"):
+        if not r2pca_symbols:
+            st.error("Please select at least 2 assets for R²-PCA analysis.")
+        else:
+            with st.spinner("Computing R²-PCA analysis..."):
+                r2pca_results = run_r2pca_analysis(r2pca_symbols, window_size_r2pca, data_limit_r2pca, timeframe_r2pca)
+                
+                if not r2pca_results.empty:
+                    st.success("✅ R²-PCA analysis complete!")
+                    
+                    # Display results
+                    st.subheader("R²-PCA Results")
+                    
+                    # PC1 vs PC2 scatter plot
+                    fig_r2pca = px.scatter(
+                        r2pca_results, x='PC1', y='PC2', 
+                        title='R²-PCA: PC1 vs PC2 Over Time',
+                        labels={'PC1': 'Principal Component 1 (Market Factor)', 
+                               'PC2': 'Principal Component 2 (Contrarian Strength)'},
+                        color_discrete_sequence=['#2E86AB']
+                    )
+                    fig_r2pca.add_hline(y=0, line_dash="dash", line_color="grey")
+                    fig_r2pca.add_vline(x=0, line_dash="dash", line_color="grey")
+                    fig_r2pca.update_layout(height=500)
+                    st.plotly_chart(fig_r2pca, use_container_width=True)
+                    
+                    # Time series of PC1 and PC2
+                    fig_ts = go.Figure()
+                    fig_ts.add_trace(go.Scatter(
+                        x=r2pca_results['date'], y=r2pca_results['PC1'],
+                        mode='lines', name='PC1 (Market Factor)', line=dict(color='#2E86AB')
+                    ))
+                    fig_ts.add_trace(go.Scatter(
+                        x=r2pca_results['date'], y=r2pca_results['PC2'],
+                        mode='lines', name='PC2 (Contrarian Strength)', line=dict(color='#A23B72')
+                    ))
+                    fig_ts.update_layout(
+                        title='R²-PCA Components Over Time',
+                        xaxis_title='Date',
+                        yaxis_title='Component Score',
+                        height=400
+                    )
+                    st.plotly_chart(fig_ts, use_container_width=True)
+                    
+                    # BTC loadings over time
+                    if 'BTC/USD' in r2pca_symbols:
+                        fig_loadings = go.Figure()
+                        fig_loadings.add_trace(go.Scatter(
+                            x=r2pca_results['date'], y=r2pca_results['PC1_loading_BTC'],
+                            mode='lines', name='PC1 BTC Loading', line=dict(color='#F18F01')
+                        ))
+                        fig_loadings.add_trace(go.Scatter(
+                            x=r2pca_results['date'], y=r2pca_results['PC2_loading_BTC'],
+                            mode='lines', name='PC2 BTC Loading', line=dict(color='#C73E1D')
+                        ))
+                        fig_loadings.update_layout(
+                            title='BTC Loadings in R²-PCA Components',
+                            xaxis_title='Date',
+                            yaxis_title='Loading Value',
+                            height=400
+                        )
+                        st.plotly_chart(fig_loadings, use_container_width=True)
+                    
+                    # Summary statistics
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("PC1 Mean", f"{r2pca_results['PC1'].mean():.3f}")
+                        st.metric("PC1 Std", f"{r2pca_results['PC1'].std():.3f}")
+                    with col2:
+                        st.metric("PC2 Mean", f"{r2pca_results['PC2'].mean():.3f}")
+                        st.metric("PC2 Std", f"{r2pca_results['PC2'].std():.3f}")
+                    with col3:
+                        st.metric("Analysis Period", f"{len(r2pca_results)} days")
+                        st.metric("Window Size", f"{window_size_r2pca} days")
+                    
+                    # Interpretation
+                    st.subheader("R²-PCA Interpretation")
+                    st.markdown("""
+                    **PC1 (Principal Component 1):** Represents the common market factor - how much each asset moves with the overall crypto market.
+                    - **High PC1:** Asset is a strong market leader
+                    - **Low PC1:** Asset is a market laggard
+                    
+                    **PC2 (Principal Component 2):** Represents contrarian strength - how well an asset performs when the market is under pressure.
+                    - **High PC2:** Asset shows contrarian strength (defensive)
+                    - **Low PC2:** Asset shows persistent weakness
+                    
+                    **R²-PCA Benefits:**
+                    - **Stable orientations:** No sign flips between time windows
+                    - **Consistent interpretation:** PC1 and PC2 maintain their economic meaning
+                    - **Smooth transitions:** Gradual evolution of market structure
+                    """)
+                else:
+                    st.error("R²-PCA analysis failed. Please check your data and parameters.")
